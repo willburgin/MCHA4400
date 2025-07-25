@@ -10,12 +10,12 @@ cv::Mat detectAndDrawHarris(const cv::Mat & img, int maxNumFeatures)
         cv::Mat imgout = img.clone();
 
         // TODO
-        int thresh = 180; // Texture threshold.
+        int thresh = 140; // Texture threshold.
         cv::Mat gray;
         cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // Harris detector expects grayscale input.
 
         cv::Mat dst;                                 // Store scores computed by harris detector.
-        cv::cornerHarris(gray, dst, 2, 3, 0.04);     // input:output:neighborhoodsize:aperture:harrisparameter
+        cv::cornerHarris(gray, dst, 2, 3, 0.05);     // input:output:neighborhoodsize:aperture:harrisparameter
         
         cv::Mat dst_norm, dst_norm_scaled;          
         cv::normalize(dst, dst_norm, 0, 255, cv::NORM_MINMAX, CV_32FC1); // Normalise for evaluation and plotting.
@@ -37,7 +37,7 @@ cv::Mat detectAndDrawHarris(const cv::Mat & img, int maxNumFeatures)
         // Draw all detected corners above threshold in orange
         for (const auto& [pt, score] : corner_points) 
         {
-            cv::circle(imgout, pt, 3, cv::Scalar(0, 165, 255), 1);  // Orange in BGR
+            cv::circle(imgout, pt, 3, cv::Scalar(0, 255, 0), 1);  // Orange in BGR
         }
 
         // Sort by texture score (descending).
