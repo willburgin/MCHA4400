@@ -1,8 +1,0 @@
-set(__QT_DEPLOY_TARGET_nanobench_FILE /home/willburgin/MCHA4400/lab2/build/_deps/nanobench-build/libnanobench.a)
-set(__QT_DEPLOY_TARGET_nanobench_TYPE STATIC_LIBRARY)
-set(__QT_DEPLOY_TARGET_common_FILE /home/willburgin/MCHA4400/lab2/build/libcommon.so)
-set(__QT_DEPLOY_TARGET_common_TYPE SHARED_LIBRARY)
-set(__QT_DEPLOY_TARGET_lab2_FILE /home/willburgin/MCHA4400/lab2/build/lab2)
-set(__QT_DEPLOY_TARGET_lab2_TYPE EXECUTABLE)
-set(__QT_DEPLOY_TARGET_tests_FILE /home/willburgin/MCHA4400/lab2/build/tests)
-set(__QT_DEPLOY_TARGET_tests_TYPE EXECUTABLE)

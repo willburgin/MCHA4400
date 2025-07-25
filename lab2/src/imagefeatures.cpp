@@ -10,12 +10,12 @@ cv::Mat detectAndDrawHarris(const cv::Mat & img, int maxNumFeatures)
         cv::Mat imgout = img.clone();
 
         // TODO
-        int thresh = 200; // Arbitrary texture threshold.
+        int thresh = 180; // Texture threshold.
         cv::Mat gray;
         cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // Harris detector expects grayscale input.
 
         cv::Mat dst;                                 // Store scores computed by harris detector.
-        cv::cornerHarris(gray, dst, 2, 3, 0.04);  
+        cv::cornerHarris(gray, dst, 2, 3, 0.04);     // input:output:neighborhoodsize:aperture:harrisparameter
         
         cv::Mat dst_norm, dst_norm_scaled;          
         cv::normalize(dst, dst_norm, 0, 255, cv::NORM_MINMAX, CV_32FC1); // Normalise for evaluation and plotting.
@@ -46,14 +46,18 @@ cv::Mat detectAndDrawHarris(const cv::Mat & img, int maxNumFeatures)
             return a.second > b.second; // Second element in corner_points
         });
 
+        // Print statement setups:
+        std::println("Image width: {}", img.cols);
+        std::println("Image height: {}", img.rows);
+        std::println("Features requested: {}", maxNumFeatures);
+        std::println("Features detected: {}", corner_points.size());
+        std::println("{:<5} {:<10} {:<10} {:<10}", "Index", "X", "Y", "Score");\
+        
         // Limit to maxNumFeatures.
         if (corner_points.size() > static_cast<float>(maxNumFeatures)) 
         {
             corner_points.resize(maxNumFeatures);
         }
-        // Print header
-        std::println("Top {} most highly textured features (sorted by corner score):", maxNumFeatures);
-        std::println("{:<5} {:<10} {:<10} {:<10}", "Index", "X", "Y", "Score");
 
         // Print each feature
         for (size_t i = 0; i < corner_points.size(); ++i) 
@@ -72,7 +76,7 @@ cv::Mat detectAndDrawHarris(const cv::Mat & img, int maxNumFeatures)
             // Label the feature with its index number
             std::string label = std::to_string(i + 1);
             cv::putText(imgout, label,
-                        pt + cv::Point(5, -5),               // offset text position
+                        pt + cv::Point(5, -5),                // offset text position
                         cv::FONT_HERSHEY_SIMPLEX,
                         0.9,                                  // font scale
                         cv::Scalar(255, 0, 0),                // green text

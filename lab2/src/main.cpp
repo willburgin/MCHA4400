@@ -173,35 +173,82 @@ int main(int argc, char *argv[])
 
     if (isVideo)
     {
-        if (doExport)
+        cv::VideoCapture cap(inputPath.string());
+        if (!cap.isOpened()) 
+        {
+            std::println("Error: Failed to open video file: {}", inputPath.string());
+            return EXIT_FAILURE;
+        }
+
+        cv::VideoWriter writer;           
+        double fps = cap.get(cv::CAP_PROP_FPS);
+        if (doExport) 
         {
             // TODO: Open output video for writing using the same fps as the input video
             //       and the codec set to cv::VideoWriter::fourcc('m', 'p', '4', 'v')
+            int width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+            int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+
+            writer.open(outputPath.string(),
+                        cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+                        fps,
+                        cv::Size(width, height));
+
+            if (!writer.isOpened()) 
+            {
+                std::println("Error: Could not open output video file: {}", outputPath.string());
+                return EXIT_FAILURE;
+            }
         }
 
         while (true)
         {
             // TODO: Get next frame from input video
+            cv::Mat frame;
+            cap >> frame;
 
             // TODO: If frame is empty, break out of the while loop
+            if (frame.empty()) 
+            {
+                break;
+            }
             
             // TODO: Call one of the detectAndDraw functions from imagefeatures.cpp according to the detector option specified at the command line
+            cv::Mat outputFrame;
+            if (detector == "harris")
+            {
+                outputFrame = detectAndDrawHarris(frame, maxNumFeatures);
+            }
+            else 
+            {
+                std::println("No support for other detections right now.");
+                return EXIT_FAILURE;
+            }
 
             if (doExport)
             {
                 // TODO: Write image returned from detectAndDraw to frame of output video
+                writer.write(outputFrame);
             }
             else
             {
                 // TODO: Display image returned from detectAndDraw on screen and wait for 1000/fps milliseconds
+                cv::imshow("Video Feature Detection", outputFrame);
+                int delay = static_cast<int>(1000.0 / fps);
+                if (cv::waitKey(delay) == 27) 
+                {
+                    break;
+                }
             }
         }
 
         // TODO: release the input video object
+        cap.release();
 
         if (doExport)
         {
             // TODO: release the output video object
+            writer.release();
         }
     }
 
