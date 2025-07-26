@@ -2,6 +2,19 @@
     "cmake.configureSettings": {
         "BUILD_DOCUMENTATION": "OFF"
     },
+    "files.associations": {
+        "array": "cpp",
+        "bitset": "cpp",
+        "string_view": "cpp",
+        "initializer_list": "cpp",
+        "regex": "cpp",
+        "utility": "cpp",
+        "deque": "cpp",
+        "forward_list": "cpp",
+        "list": "cpp",
+        "string": "cpp",
+        "vector": "cpp"
+    },
     // Uncomment for MSYS2
     // "cmake.generator": "Ninja",
     // "cmake.cmakePath": "C:/msys64/clang64/bin/cmake.exe",

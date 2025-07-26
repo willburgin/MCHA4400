@@ -152,6 +152,14 @@ int main(int argc, char *argv[])
         {
             outputImage = detectAndDrawHarris(inputImage, maxNumFeatures);
         }
+        if (detector == "shi")
+        {
+            outputImage = detectAndDrawShiAndTomasi(inputImage, maxNumFeatures);
+        }
+        if (detector == "fast")
+        {
+            outputImage = detectAndDrawFAST(inputImage, maxNumFeatures);
+        }
         else 
         {
             std::println("No support for other detectors right now.");
@@ -219,7 +227,15 @@ int main(int argc, char *argv[])
             {
                 outputFrame = detectAndDrawHarris(frame, maxNumFeatures);
             }
+            if (detector == "shi")
+            {
+                outputFrame = detectAndDrawShiAndTomasi(frame, maxNumFeatures);
+            }
             else 
+            if (detector == "fast")
+            {
+                outputFrame = detectAndDrawFAST(frame, maxNumFeatures);
+            }
             {
                 std::println("No support for other detections right now.");
                 return EXIT_FAILURE;
