@@ -172,7 +172,7 @@ cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
     cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // FAST detector expects grayscale input.
 
     std::vector<cv::KeyPoint> keypoints;          // Store keypoints computed by FAST detector.
-    cv::FAST(gray, keypoints, 20, false);         // input:output:threshold:nonMaxSupression
+    cv::FAST(gray, keypoints, 50, true);         // input:output:threshold:nonMaxSupression
 
     // Draw all detected corners above threshold in green
     for (const auto& kp : keypoints)

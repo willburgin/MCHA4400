@@ -230,12 +230,12 @@ int main(int argc, char *argv[])
             if (detector == "shi")
             {
                 outputFrame = detectAndDrawShiAndTomasi(frame, maxNumFeatures);
-            }
-            else 
+            } 
             if (detector == "fast")
             {
                 outputFrame = detectAndDrawFAST(frame, maxNumFeatures);
             }
+            else
             {
                 std::println("No support for other detections right now.");
                 return EXIT_FAILURE;
