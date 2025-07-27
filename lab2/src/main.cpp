@@ -179,15 +179,15 @@ int main(int argc, char *argv[])
         {
             outputImage = detectAndDrawHarris(inputImage, maxNumFeatures);
         }
-        if (detector == "shi")
+        else if (detector == "shi")
         {
             outputImage = detectAndDrawShiAndTomasi(inputImage, maxNumFeatures);
         }
-        if (detector == "fast")
+        else if (detector == "fast")
         {
             outputImage = detectAndDrawFAST(inputImage, maxNumFeatures);
         }
-        if (detector == "aruco")
+        else if (detector == "aruco")
         {
             outputImage = detectAndDrawArUco(inputImage, maxNumFeatures);
         }
@@ -258,15 +258,15 @@ int main(int argc, char *argv[])
             {
                 outputFrame = detectAndDrawHarris(frame, maxNumFeatures);
             }
-            if (detector == "shi")
+            else if (detector == "shi")
             {
                 outputFrame = detectAndDrawShiAndTomasi(frame, maxNumFeatures);
             } 
-            if (detector == "fast")
+            else if (detector == "fast")
             {
                 outputFrame = detectAndDrawFAST(frame, maxNumFeatures);
             }
-            if (detector == "aruco")
+            else if (detector == "aruco")
             {
                 outputFrame = detectAndDrawArUco(frame, maxNumFeatures);
             }

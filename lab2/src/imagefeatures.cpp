@@ -96,7 +96,7 @@ cv::Mat detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
 
     double minVal, maxVal;
     cv::minMaxLoc(dst, &minVal, &maxVal);
-    float thresh = 0.1f * static_cast<float>(maxVal); 
+    float thresh = 0.1f * static_cast<float>(maxVal);   // 10% threshold
 
     std::vector<std::pair<cv::Point, float>> corner_points; // Initialise vector for storing.
     for (int i = 0; i < dst.rows; i++)
