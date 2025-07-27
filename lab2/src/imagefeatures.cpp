@@ -44,7 +44,6 @@ cv::Mat detectAndDrawHarris(const cv::Mat &img, int maxNumFeatures)
                   return a.second > b.second; // Second element in corner_points
               });
 
-    // Print statement setups:
     std::println("Image width: {}", img.cols);
     std::println("Image height: {}", img.rows);
     std::println("Features requested: {}", maxNumFeatures);
@@ -123,7 +122,6 @@ cv::Mat detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
                   return a.second > b.second; // Second element in corner_points
               });
 
-    // Print statement setups:
     std::println("Image width: {}", img.cols);
     std::println("Image height: {}", img.rows);
     std::println("Features requested: {}", maxNumFeatures);
@@ -186,7 +184,6 @@ cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
                   return a.response > b.response;
               });
 
-    // Print statement setups:
     std::println("Image width: {}", img.cols);
     std::println("Image height: {}", img.rows);
     std::println("Features requested: {}", maxNumFeatures);
@@ -232,6 +229,58 @@ cv::Mat detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
     cv::Mat imgout = img.clone();
 
     // TODO
+    cv::Mat gray;
+    cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // Aruco detector expects grayscale input.
+
+    // Build the ArUco detector function from online example.
+    std::vector<std::vector<cv::Point2f>> markerCorners, rejectedCandidates; 
+    std::vector<int> markerIds;
+
+    cv::aruco::DetectorParameters detectorParams = cv::aruco::DetectorParameters();
+    cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+    cv::aruco::ArucoDetector detector(dictionary, detectorParams);
+
+    detector.detectMarkers(gray, markerCorners, markerIds, rejectedCandidates);
+   
+    std::println("Image width: {}", img.cols);
+    std::println("Image height: {}", img.rows);
+    std::println("Marker Corners: {}",   markerIds.size());
+    std::println("{:<5} {:<10} {:<10}", "ID", "X", "Y");
+
+    // Combine markerIds and markerCorners together and sort by ID
+    std::vector<std::pair<int, std::vector<cv::Point2f>>> sortedMarkers;
+    for (size_t i = 0; i < markerIds.size(); ++i) 
+    {
+        sortedMarkers.emplace_back(markerIds[i], markerCorners[i]);
+    }
+    std::sort(sortedMarkers.begin(), sortedMarkers.end(), [](const auto& a, const auto& b) 
+    { 
+        return a.first < b.first; 
+    });
+
+    // Then iterate through sorted markers
+    for (const auto& [id, corners] : sortedMarkers)
+    {
+        std::println("ID: {:<5} with corners: ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f})",
+            id,
+            corners[0].x, corners[0].y,
+            corners[1].x, corners[1].y,
+            corners[2].x, corners[2].y,
+            corners[3].x, corners[3].y);
+
+        // Draw green circles at all 4 corners
+        for (const auto& pt : corners) {
+            cv::circle(imgout, pt, 3, cv::Scalar(0, 255, 0), 1);
+        }
+
+        std::string label = std::to_string(id);
+        cv::putText(imgout, label,
+                    corners[0] + cv::Point2f(5, -5),
+                    cv::FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    cv::Scalar(255, 0, 0),
+                    2);
+    }
 
     return imgout;
 }

@@ -123,7 +123,34 @@ int main(int argc, char *argv[])
         // TODO: Run the benchmarks for the 4 feature detectors IGNORE THIS FOR NOW!!!
         if (doBenchmark)
         {
-            // THINGS
+            cv::Mat data = cv::imread(inputPath.string(), cv::IMREAD_COLOR);
+            bench.performanceCounters(false);
+            bench.minEpochIterations(10);
+            bench.relative(true);
+            bench.title("Benchmark results");
+
+            bench.run("Harris", [&]
+            {
+                cv::Mat out = detectAndDrawHarris(data, maxNumFeatures);
+                bench.doNotOptimizeAway(out);
+            });
+
+            bench.run("Shi-Tomasi", [&]
+            {
+                cv::Mat out = detectAndDrawShiAndTomasi(data, maxNumFeatures);
+                bench.doNotOptimizeAway(out);
+            });
+
+            bench.run("FAST", [&]
+            {
+                cv::Mat out = detectAndDrawFAST(data, maxNumFeatures);
+                bench.doNotOptimizeAway(out);
+            });
+            bench.run("ArUco", [&]
+            {
+                cv::Mat out = detectAndDrawArUco(data, maxNumFeatures);
+                bench.doNotOptimizeAway(out);
+            });
         }
 
         // Restore console output
@@ -159,6 +186,10 @@ int main(int argc, char *argv[])
         if (detector == "fast")
         {
             outputImage = detectAndDrawFAST(inputImage, maxNumFeatures);
+        }
+        if (detector == "aruco")
+        {
+            outputImage = detectAndDrawArUco(inputImage, maxNumFeatures);
         }
         else 
         {
@@ -234,6 +265,10 @@ int main(int argc, char *argv[])
             if (detector == "fast")
             {
                 outputFrame = detectAndDrawFAST(frame, maxNumFeatures);
+            }
+            if (detector == "aruco")
+            {
+                outputFrame = detectAndDrawArUco(frame, maxNumFeatures);
             }
             else
             {
