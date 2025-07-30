@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
         {
             cv::Mat data = cv::imread(inputPath.string(), cv::IMREAD_COLOR);
             bench.performanceCounters(false);
-            bench.minEpochIterations(10);
+            bench.minEpochIterations(200);
             bench.relative(true);
             bench.title("Benchmark results");
 
