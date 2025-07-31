@@ -15,7 +15,7 @@ cv::Mat detectAndDrawHarris(const cv::Mat &img, int maxNumFeatures)
 
     cv::cornerHarris(gray, dst, 3, 3, 0.04); // input:output:neighborhoodsize:aperture:harrisparameter
 
-    float thresh = 0.0005f; // Example absolute threshold
+    float thresh = 0.0004f; // Example absolute threshold
     std::vector<std::pair<cv::Point, float>> corner_points; // Initialise vector for storing.
     
     for (int i = 0; i < dst.rows; i++)
@@ -203,6 +203,7 @@ cv::Mat detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
     
     return imgout;
 }
+
 cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
 {
     cv::Mat imgout = img.clone();
@@ -210,38 +211,31 @@ cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
     cv::Mat gray;
     cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // FAST detector expects grayscale input.
     std::vector<cv::KeyPoint> keypoints; // Store keypoints computed by FAST detector.
-    cv::FAST(gray, keypoints, 60, true, cv::FastFeatureDetector::TYPE_9_16); // input:output:threshold:nonMaxSupression
-    
+    cv::Ptr<cv::FastFeatureDetector> detector = cv::FastFeatureDetector::create(65, true, cv::FastFeatureDetector::TYPE_9_16);
+    detector->detect(gray, keypoints);    
+
+    int suppressionRadius = 20;
+    std::vector<cv::KeyPoint> suppressed_keypoints;
+    for (const auto& candidate : keypoints) {
+        bool suppress = false;
+        for (const auto& accepted : suppressed_keypoints) {
+            double distance = cv::norm(candidate.pt - accepted.pt);
+            if (distance < suppressionRadius) {
+                suppress = true;
+                break;
+            }
+        }
+        if (!suppress) {
+            suppressed_keypoints.push_back(candidate);
+        }
+    }
+    keypoints = suppressed_keypoints;
+
     // Sort by response score (descending).
     std::sort(keypoints.begin(), keypoints.end(), [](const auto &a, const auto &b)
     {
         return a.response > b.response;
     });
-    
-    // APPLY NON-MAXIMUM SUPPRESSION to keypoints
-    int suppressionRadius = 10; // Minimum distance between corners
-    std::vector<cv::KeyPoint> suppressed_points;
-    
-    for (const auto &candidate_kp : keypoints)
-    {
-        bool suppress = false;
-        for (const auto &accepted_kp : suppressed_points)
-        {
-            double distance = cv::norm(candidate_kp.pt - accepted_kp.pt);
-            if (distance < suppressionRadius)
-            {
-                suppress = true;
-                break;
-            }
-        }
-        if (!suppress)
-        {
-            suppressed_points.emplace_back(candidate_kp);
-        }
-    }
-    
-    keypoints = suppressed_points; // Replace with suppressed results
-    // END SUPPRESSION
     
     // Draw all detected corners (now suppressed) in green
     for (const auto &kp : keypoints)
@@ -252,73 +246,38 @@ cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
     std::println("Image width: {}", img.cols);
     std::println("Image height: {}", img.rows);
     std::println("Features requested: {}", maxNumFeatures);
-    std::println("Features detected: {}", keypoints.size());
+    std::println("Features detected: {}",   keypoints.size());
     std::println("{:<5} {:<10} {:<10} {:<10}", "Index", "X", "Y", "Score");
-    
+
     // Limit to maxNumFeatures.
-    if (keypoints.size() > static_cast<size_t>(maxNumFeatures))
+    if (keypoints.size() > static_cast<float>(maxNumFeatures))
     {
         keypoints.resize(maxNumFeatures);
     }
-    
+
     // Print each feature
     for (size_t i = 0; i < keypoints.size(); ++i)
     {
-        const auto &kp = keypoints[i];
+        const auto& kp = keypoints[i];
         std::println("{:<5} {:<10} {:<10} {:.8f}", i + 1, kp.pt.x, kp.pt.y, kp.response);
     }
-    
     // TODO: Draw on output image
     for (size_t i = 0; i < keypoints.size(); ++i)
     {
-        const auto &kp = keypoints[i];
+        const auto& kp = keypoints[i];
+
         // Draw a red circle at the feature
         cv::circle(imgout, kp.pt, 4, cv::Scalar(0, 0, 255), 1);
+
         // Label the feature with its index number
         std::string label = std::to_string(i + 1);
         cv::putText(imgout, label,
-                   kp.pt + cv::Point2f(5, -5), // offset text position
-                   cv::FONT_HERSHEY_SIMPLEX,
-                   0.9, // font scale
-                   cv::Scalar(255, 0, 0), // blue text
-                   2); // thickness
+                    kp.pt + cv::Point2f(5, -5), // offset text position
+                    cv::FONT_HERSHEY_SIMPLEX,
+                    0.9,                   // font scale
+                    cv::Scalar(255, 0, 0), // green text
+                    2);                    // thickness
     }
-    // std::println("Image width: {}", img.cols);
-    // std::println("Image height: {}", img.rows);
-    // std::println("Features requested: {}", maxNumFeatures);
-    // std::println("Features detected: {}",   keypoints.size());
-    // std::println("{:<5} {:<10} {:<10} {:<10}", "Index", "X", "Y", "Score");
-
-    // // Limit to maxNumFeatures.
-    // if (keypoints.size() > static_cast<float>(maxNumFeatures))
-    // {
-    //     keypoints.resize(maxNumFeatures);
-    // }
-
-    // // Print each feature
-    // for (size_t i = 0; i < keypoints.size(); ++i)
-    // {
-    //     const auto& kp = keypoints[i];
-    //     std::println("{:<5} {:<10} {:<10} {:.8f}", i + 1, kp.pt.x, kp.pt.y, kp.response);
-    // }
-    // // TODO: Draw on output image
-    // for (size_t i = 0; i < keypoints.size(); ++i)
-    // {
-    //     const auto& kp = keypoints[i];
-
-    //     // Draw a red circle at the feature
-    //     cv::circle(imgout, kp.pt, 4, cv::Scalar(0, 0, 255), 1);
-
-    //     // Label the feature with its index number
-    //     std::string label = std::to_string(i + 1);
-    //     cv::putText(imgout, label,
-    //                 kp.pt + cv::Point2f(5, -5), // offset text position
-    //                 cv::FONT_HERSHEY_SIMPLEX,
-    //                 0.9,                   // font scale
-    //                 cv::Scalar(255, 0, 0), // green text
-    //                 2);                    // thickness
-    // }
-
 
     return imgout;
 }
