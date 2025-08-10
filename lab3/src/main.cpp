@@ -32,7 +32,7 @@ int main(int argc, char *argv[])
 
     // Parse input arguments
     bool doExport = parser.has("export");
-    bool doAnnotate = parser.has("annotate");
+    // bool doAnnotate = parser.has("annotate");
     std::filesystem::path inputPath = parser.get<std::string>("@input");
 
     // Check for syntax errors

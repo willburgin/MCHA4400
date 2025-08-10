@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <iostream>
 #include <string>
 #include <vector>
 #include <opencv2/core.hpp>
@@ -60,16 +61,22 @@ void DuckDetectorBase::postprocess(const std::vector<float> & class_scores_data,
             cv::threshold(resized_query_mask, binary_mask, 0.5, 1, cv::THRESH_BINARY);
             binary_mask.convertTo(binary_mask, CV_8U);
 
-            labelMask.setTo(label, binary_mask);
-            validLabels.push_back(label);
+            cv::Moments m = cv::moments(binary_mask, true);
+            int area = static_cast<int>(m.m00);
 
-            // Compute centroid and area
-            // TODO: Lab 3
+            if (area > 0) 
+            {
+                cv::Point2f centroid;
+                centroid.x = static_cast<float>(m.m10 / m.m00);
+                centroid.y = static_cast<float>(m.m01 / m.m00);
 
-            // centroids.push_back(centroid);
-            // areas.push_back(area);
+                labelMask.setTo(label, binary_mask);     
+                validLabels.push_back(label);            
+                areas.push_back(area);
+                centroids.push_back(centroid);
 
-            label++;
+                label++;
+            }
         }
     }
 
@@ -98,4 +105,26 @@ void DuckDetectorBase::postprocess(const std::vector<float> & class_scores_data,
 
     // Draw centroids and labels onto imgout
     // TODO: Lab 3
+    for (size_t i = 0; i < centroids.size(); ++i)
+    {
+        cv::Point center(cvRound(centroids[i].x), cvRound(centroids[i].y));
+        int instanceID = static_cast<int>(i); 
+
+        // Draw black X at centroid
+        int len = 3;  
+        cv::line(imgout, center - cv::Point(len, len), center + cv::Point(len, len), cv::Scalar(0, 0, 0), 2);
+        cv::line(imgout, center - cv::Point(-len, len), center + cv::Point(-len, len), cv::Scalar(0, 0, 0), 2);
+
+        // Overlay centroid coordinates, area, and instance ID
+        std::string text = "ID=" + std::to_string(instanceID) +
+                        " (" + std::to_string(cvRound(centroids[i].x)) +
+                        "," + std::to_string(cvRound(centroids[i].y)) +
+                        ") A=" + std::to_string(areas[i]);
+
+        // Slight offset 
+        cv::putText(imgout, text, center + cv::Point(6, -6),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1,
+                    cv::LINE_AA);
+    }
+
 }

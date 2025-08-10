@@ -16,7 +16,7 @@ from tqdm.auto import tqdm
 # Set float32 matmul precision
 torch.set_float32_matmul_precision('medium')
 
-TRAIN_PATH = "../data/train"
+TRAIN_PATH = "../data/train_new_good"
 
 # Extract instance masks from annotated image
 def extract_instance_masks(annotated_image):
@@ -99,6 +99,15 @@ DUCK_STD = np.array([0.13891927, 0.10404531, 0.09613165])
 
 image_transform = A.Compose([
     A.Resize(width=512, height=512),
+
+    # AUGMENT DATA SET
+    A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.7),
+    A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.5),
+    A.GaussianBlur(blur_limit=(3, 7), p=0.3),
+    A.HorizontalFlip(p=0.5),  # Flip horizontally
+    A.VerticalFlip(p=0.1),    # Rare vertical flip
+    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, border_mode=cv2.BORDER_REFLECT_101, p=0.7),
+
     A.Normalize(mean=DUCK_MEAN.tolist(), std=DUCK_STD.tolist()),
 ])
 
@@ -113,7 +122,7 @@ def collate_fn(batch):
     mask_labels = [example["mask_labels"] for example in batch]
     return {"pixel_values": pixel_values, "pixel_mask": pixel_mask, "class_labels": class_labels, "mask_labels": mask_labels}
 
-train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True, collate_fn=collate_fn)
+train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=collate_fn)
 
 
 # Mapping from class ID to description
