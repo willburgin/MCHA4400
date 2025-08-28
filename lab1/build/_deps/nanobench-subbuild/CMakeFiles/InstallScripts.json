@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/willburgin/MCHA4400/lab1/build/_deps/nanobench-subbuild/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
