@@ -600,14 +600,36 @@ public:
         // log N(x; mu, P) = -0.5*(x - mu).'*inv(P)*(x - mu) - 0.5*log(det(2*pi*P))
 
         // TODO: Numerically stable version
+        // Goated version
+        using std::abs;
+        using std::log;
 
-        // Really bad version
-        Eigen::MatrixX<Scalar> P = S_.transpose()*S_;   // Bad, because unnecessary and loss of precision
-        Eigen::MatrixX<Scalar> Pinv = P.inverse();      // Bad, because you should know better (https://www.johndcook.com/blog/2010/01/19/dont-invert-that-matrix/)
-        Scalar quadraticForm = (x - mu_).transpose()*Pinv*(x - mu_);
-        using std::log, std::sqrt, std::exp;            // Bring selected math functions into global namespace
-        return log( 1.0/sqrt( (2*std::numbers::pi*P).determinant() )*exp(-0.5*quadraticForm) ); // Bad, because determinant, underflow, overflow and loss of precision
-    }
+        const Eigen::Index n = x.size();
+        const Eigen::VectorX<Scalar> diff = x - mu_;
+
+        // S is upper-triangular, S^T is lower-triangular
+        const Eigen::VectorX<Scalar> w =
+            S_.transpose().template triangularView<Eigen::Lower>().solve(diff);
+
+        // sum log |diag(S)|
+        Scalar sum_log_diagS = Scalar(0); // initalise
+        for (Eigen::Index i = 0; i < S_.cols(); ++i) { // iterate over the columns of S
+            Scalar d = abs(S_(i, i)); // get the absolute value of the diagonal element of S
+            sum_log_diagS += log(d); // add the log of the absolute value of the diagonal element to the sum
+        }
+
+        // -(n/2) log(2pi) - sum log|diag(S)| - 0.5 ||w||^2
+        const Scalar const_term = -(Scalar(n) / Scalar(2)) * log(Scalar(2) * Scalar(3.14159265358979323846)); // compute the constant term
+        return const_term - sum_log_diagS - Scalar(0.5) * w.squaredNorm(); // return the log-likelihood
+
+                // Really bad version
+        // Eigen::MatrixX<Scalar> P = S_.transpose()*S_;   // Bad, because unnecessary and loss of precision
+        // Eigen::MatrixX<Scalar> Pinv = P.inverse();      // Bad, because you should know better (https://www.johndcook.com/blog/2010/01/19/dont-invert-that-matrix/)
+        // Scalar quadraticForm = (x - mu_).transpose()*Pinv*(x - mu_);
+        // using std::log, std::sqrt, std::exp;            // Bring selected math functions into global namespace
+        // return log( 1.0/sqrt( (2*std::numbers::pi*P).determinant() )*exp(-0.5*quadraticForm) ); // Bad, because determinant, underflow, overflow and loss of precision
+
+    }       
 
     /**
      * @brief Compute the log-likelihood of a given point and its gradient under the Gaussian distribution.
@@ -625,7 +647,15 @@ public:
     Scalar log(const Eigen::VectorX<Scalar> & x, Eigen::VectorX<Scalar> & g) const
     {
         // TODO: Compute gradient of log N(x; mu, P) w.r.t. x and write it to g
-
+        assert(x.size() == dim()); // ensure x matches the same dimension as the Gaussian distribution
+        g.resize(x.size()); // resize g to match the dimension of x
+        // reuse the scalar overload function
+        // gradient is -P^-1*(x - mu) where P = S^T*S
+        Eigen::VectorX<Scalar> diff = x - mu_;
+        Eigen::VectorX<Scalar> w = S_.transpose().template triangularView<Eigen::Lower>().solve(diff);
+        Eigen::VectorX<Scalar> z = S_.template triangularView<Eigen::Upper>().solve(w);
+        g = -z;
+        // return the log-likelihood
         return log(x);
     }
 
@@ -646,6 +676,11 @@ public:
     Scalar log(const Eigen::VectorX<Scalar> & x, Eigen::VectorX<Scalar> & g, Eigen::MatrixX<Scalar> & H) const
     {
         // TODO: Compute Hessian of log N(x; mu, P) w.r.t. x and write it to H
+        assert(x.size() == dim()); // ensure x matches the same dimension as the Gaussian distribution
+        g.resize(x.size()); // resize g to match the dimension of x
+        H.resize(x.size(), x.size()); // resize H to match the dimension of x
+        // Hessian is -P^-1 (constant)
+        H = -infoMat(); // because infoMat is P^-1
 
         return log(x, g);
     }
