@@ -136,7 +136,7 @@ SCENARIO("Gaussian log nominal")
     }
 }
 
-SCENARIO("Gaussian log exponential underflow" * doctest::skip())
+SCENARIO("Gaussian log exponential underflow")
 {
     GIVEN("Parameters that may cause underflow in the exponential")
     {
@@ -163,7 +163,7 @@ SCENARIO("Gaussian log exponential underflow" * doctest::skip())
 
 #include <Eigen/LU> // For .determinant()
 
-SCENARIO("Gaussian log determinant underflow" * doctest::skip())
+SCENARIO("Gaussian log determinant underflow")
 {
     GIVEN("Parameters that may cause determinant underflow")
     {
@@ -187,7 +187,7 @@ SCENARIO("Gaussian log determinant underflow" * doctest::skip())
     }
 }
 
-SCENARIO("Gaussian log determinant overflow" * doctest::skip())
+SCENARIO("Gaussian log determinant overflow")
 {
     GIVEN("Parameters that may cause determinant overflow")
     {
@@ -211,7 +211,7 @@ SCENARIO("Gaussian log determinant overflow" * doctest::skip())
     }
 }
 
-SCENARIO("Gaussian log covariance overflow" * doctest::skip())
+SCENARIO("Gaussian log covariance overflow")
 {
     GIVEN("Parameters that may cause the covariance to overflow")
     {
@@ -234,7 +234,7 @@ SCENARIO("Gaussian log covariance overflow" * doctest::skip())
     }
 }
 
-SCENARIO("Gaussian log with poorly conditioned covariance" * doctest::skip())
+SCENARIO("Gaussian log with poorly conditioned covariance")
 {
     GIVEN("Parameters that result in a poorly conditioned covariance")
     {

@@ -12,6 +12,7 @@
 #include <numbers>
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/normal_distribution.hpp>
+#include <boost/math/special_functions/gamma.hpp>
 #include <Eigen/Core>
 #include "DensityBase.hpp"
 
@@ -109,8 +110,7 @@ public:
     {
         assert(p >= 0);
         assert(p < 1);
-        // TODO
-        return 0.0;
+        return 2 * boost::math::gamma_p_inv(nu / 2.0, p);
     }
 
     /**
@@ -120,8 +120,7 @@ public:
      */
     static double normcdf(double w)
     {
-        // TODO
-        return 0.0;
+        return 0.5 * erfc(-w * std::numbers::sqrt2 / 2.0);
     }
 
     /**
@@ -227,15 +226,39 @@ public:
      * @param nSamples The number of samples to generate (default: 100).
      * @return Matrix of points on the ellipse boundary.
      */
+
     Eigen::Matrix<Scalar, 2, Eigen::Dynamic> confidenceEllipse(double nSigma = 3.0, int nSamples = 100) const
     {
         const Eigen::Index & n = dim();
         assert(n == 2);
-
-        Eigen::Matrix<Scalar, 2, Eigen::Dynamic> X(2, nSamples);
-        // TODO
-        assert(X.cols() == nSamples);
+    
+        // from matlab directly
+        const double c  = normcdf(nSigma) - normcdf(-nSigma);
+        const Scalar r  = Scalar(std::sqrt(chi2inv(c, 2.0)));
+    
+        // angles in [0, 2π]
+        Eigen::Matrix<Scalar, 1, Eigen::Dynamic> t(1, nSamples);
+        const Scalar twoPi = Scalar(2.0) * Scalar(3.14159265358979323846);
+        for (int i = 0; i < nSamples; ++i) 
+        {
+            t(i) = twoPi * Scalar(i) / Scalar(nSamples - 1); // includes endpoint
+        }
+    
+        // circle samples in whitened coords
+        Eigen::Matrix<Scalar, 2, Eigen::Dynamic> W(2, nSamples);
+        using std::cos; using std::sin;
+        for (int i = 0; i < nSamples; ++i) 
+        {
+            W(0, i) = r * cos(t(i));
+            W(1, i) = r * sin(t(i));
+        }
+    
+        // map back: X = μ + Sᵀ W
+        Eigen::Matrix<Scalar, 2, Eigen::Dynamic> X = sqrtCov().transpose() * W;
+        X.colwise() += mean();
+    
         assert(X.rows() == 2);
+        assert(X.cols() == nSamples);
         return X;
     }
 

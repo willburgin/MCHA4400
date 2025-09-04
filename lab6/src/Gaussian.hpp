@@ -476,8 +476,13 @@ public:
     {
         Gaussian out;
         // TODO
-        // out.mu_ = ???
-        // out.S_ = ???
+        out.mu_ = mu_(idx); // mean slice
+        Eigen::MatrixX<Scalar> A = S_(Eigen::all, idx); // A = S(:,idx)
+        const Eigen::Index k = A.cols();
+        Eigen::HouseholderQR<Eigen::MatrixX<Scalar>> qr(A);
+        out.S_ = qr.matrixQR()
+            .topLeftCorner(k, k)
+            .template triangularView<Eigen::Upper>();
         return out;
     }
 
@@ -499,11 +504,38 @@ public:
     Gaussian conditional(const IndexTypeA & idxA, const IndexTypeB & idxB, const Eigen::VectorX<Scalar> & xB) const
     {
         // FIXME: The following implementation is in error, but it does pass some of the unit tests
+        // out.mu_ = mu_(idxA) +
+        //     S_(idxB, idxA).transpose()*
+        //     S_(idxB, idxB).eval().template triangularView<Eigen::Upper>().transpose().solve(xB - mu_(idxB));
+        // out.S_ = S_(idxA, idxA);
         Gaussian out;
-        out.mu_ = mu_(idxA) +
-            S_(idxB, idxA).transpose()*
-            S_(idxB, idxB).eval().template triangularView<Eigen::Upper>().transpose().solve(xB - mu_(idxB));
-        out.S_ = S_(idxA, idxA);
+        const std::size_t nA = idxA.size();
+        const std::size_t nB = idxB.size();
+        // build [ S(:, idxB) , S(:, idxA) ] and QR 
+        Eigen::MatrixX<Scalar> R(dim(), nA + nB);
+        R << S_(Eigen::all, idxB), S_(Eigen::all, idxA);
+
+        Eigen::HouseholderQR<Eigen::MatrixX<Scalar>> qr(R);
+        R = qr.matrixQR(); 
+
+        // extract the triangular blocks
+        // R = [ R1  R2
+        //       0    R3 ]
+        const Eigen::MatrixX<Scalar> R1 =
+            R.topLeftCorner(nB, nB).template triangularView<Eigen::Upper>();
+        const Eigen::MatrixX<Scalar> R2 =
+            R.topRightCorner(nB, nA); // rectangular; do not triangularView
+        const Eigen::MatrixX<Scalar> R3 =
+            R.bottomRightCorner(nA, nA).template triangularView<Eigen::Upper>();
+
+        // means
+        const Eigen::VectorX<Scalar> muA = mu_(idxA);
+        const Eigen::VectorX<Scalar> muB = mu_(idxB);
+
+        // compute t = (R1^T)^{-1} (xB - muB)  (lower-tri solve on R1^T)
+        // conditional mean and sqrt-cov
+        out.mu_ = muA + R2.transpose() * R1.transpose().template triangularView<Eigen::Lower>().solve(xB - muB);
+        out.S_  = R3; // upper-triangularS
         return out;
     }
 
@@ -573,10 +605,18 @@ public:
     Gaussian affineTransform(Func h) const
     {
         Gaussian out;
-        Eigen::MatrixX<Scalar> C;
-        out.mu_ = h(mu_, C);
+        Eigen::MatrixX<Scalar> C; // Jacobian matrix
+        out.mu_ = h(mu_, C); 
         // TODO
-        // out.S_ = ???
+        const Eigen::Index n = dim();
+        const Eigen::Index k = C.rows();
+        assert(C.cols() == n); // ensure C matches the same dimension as the Gaussian distribution
+        
+        Eigen::MatrixX<Scalar> A = S_ * C.transpose(); // A = S * C^T
+        Eigen::HouseholderQR<Eigen::MatrixX<Scalar>> qr(A); // QR decomposition
+        out.S_ = qr.matrixQR()
+            .topLeftCorner(k, k)
+            .template triangularView<Eigen::Upper>(); // because we dont care about Q, we only care about R
         return out;
     }
 
@@ -764,7 +804,15 @@ public:
     {
         const Eigen::Index & n = dim();
         // TODO
-        return false;
+        const double c = 2.0 * normcdf(nSigma) - 1.0;
+        const double r2 = chi2inv(c, static_cast<double>(n));
+        const auto diff = x - mu_;
+        const auto w = S_.transpose()
+                         .template triangularView<Eigen::Lower>()
+                         .solve(diff);
+        const auto m2 = w.squaredNorm();
+        
+        return m2 <= static_cast<Scalar>(r2);    
     }
 
     /**
@@ -783,9 +831,35 @@ public:
     {
         const Eigen::Index & n = dim();
         assert(n == 3);
-        
+
+        // matlab
+        const double c  = 2.0 * normcdf(nSigma) - 1.0;
+        const Scalar r2 = Scalar(chi2inv(c, 3.0));
+    
+        // compute S^{-T} via solve: S^T * Sti 
+        Eigen::Matrix<Scalar,3,3> Sti =
+            S_.transpose()
+              .template triangularView<Eigen::Lower>()
+              .solve(Eigen::Matrix<Scalar,3,3>::Identity());
+    
+        // z = S^{-T} * mu 
+        const Eigen::Matrix<Scalar,3,1> z =
+            S_.transpose()
+              .template triangularView<Eigen::Lower>()
+              .solve(mu_);
+    
+        // y = -S^{-1} z  
+        const Eigen::Matrix<Scalar,3,1> y =
+            - S_.template triangularView<Eigen::Upper>().solve(z);
+    
+        // assemble Q
         Eigen::Matrix4<Scalar> Q;
-        // TODO
+        Q.setZero();
+        Q.template block<3,3>(0,0) = Sti.transpose() * Sti;
+        Q.template block<3,1>(0,3) = y;
+        Q.template block<1,3>(3,0) = y.transpose();
+        Q(3,3) = z.squaredNorm() - r2;
+    
         return Q;
     }
 
