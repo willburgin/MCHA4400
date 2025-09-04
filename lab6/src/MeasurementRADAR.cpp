@@ -44,6 +44,7 @@ Eigen::VectorXd MeasurementRADAR::predict(const Eigen::VectorXd & x, const Syste
 {
     Eigen::VectorXd h(1);
     // TODO
+    h << std::hypot(r1, x(0) - r2);     
     return h;
 }
 
@@ -58,7 +59,9 @@ Eigen::VectorXd MeasurementRADAR::predict(const Eigen::VectorXd & x, const Syste
     dhdx.resize(h.size(), x.size());
     dhdx.setZero();
     // TODO: Set non-zero elements of dhdx
-
+    dhdx(0, 0) = (x(0) - r2) / h(0);
+    dhdx(0, 1) = 0;
+    dhdx(0, 2) = 0;
     return h;
 }
 
@@ -71,7 +74,10 @@ Eigen::VectorXd MeasurementRADAR::predict(const Eigen::VectorXd & x, const Syste
     //                   dx_j dx_k   dx_k
     d2hdx2.resize(h.size(), x.size(), x.size());
     d2hdx2.setZero();
-    // TODO: Set non-zero elements of d2hdx2
+
+    // Only nonzero is d2hdx2(0,0,0)
+    // From MATLAB: d2hdx2(1, 1, 1) = obj.r1^2/h(1)^3;
+    d2hdx2(0, 0, 0) = std::pow(r1, 2) / std::pow(h(0), 3);
 
     return h;
 }
@@ -81,6 +87,7 @@ Gaussian<double> MeasurementRADAR::noiseDensity(const SystemEstimator & system) 
     // SR is an upper triangular matrix such that SR.'*SR = R is the measurement noise covariance
     Eigen::MatrixXd SR(1, 1);
     // TODO
+    SR << 50;
     return Gaussian<double>::fromSqrtMoment(SR);
 }
 

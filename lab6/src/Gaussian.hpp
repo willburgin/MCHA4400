@@ -524,7 +524,7 @@ public:
         const Eigen::MatrixX<Scalar> R1 =
             R.topLeftCorner(nB, nB).template triangularView<Eigen::Upper>();
         const Eigen::MatrixX<Scalar> R2 =
-            R.topRightCorner(nB, nA); // rectangular; do not triangularView
+            R.topRightCorner(nB, nA); // rectangular
         const Eigen::MatrixX<Scalar> R3 =
             R.bottomRightCorner(nA, nA).template triangularView<Eigen::Upper>();
 
@@ -652,11 +652,7 @@ public:
             S_.transpose().template triangularView<Eigen::Lower>().solve(diff);
 
         // sum log |diag(S)|
-        Scalar sum_log_diagS = Scalar(0); // initalise
-        for (Eigen::Index i = 0; i < S_.cols(); ++i) { // iterate over the columns of S
-            Scalar d = abs(S_(i, i)); // get the absolute value of the diagonal element of S
-            sum_log_diagS += log(d); // add the log of the absolute value of the diagonal element to the sum
-        }
+        Scalar sum_log_diagS = (S_.diagonal().array().abs().log()).sum();
 
         // -(n/2) log(2pi) - sum log|diag(S)| - 0.5 ||w||^2
         const Scalar const_term = -(Scalar(n) / Scalar(2)) * log(Scalar(2) * Scalar(3.14159265358979323846)); // compute the constant term
