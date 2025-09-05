@@ -97,7 +97,7 @@ protected:
         , S_(S)
     {
         assert(mu_.size() == S_.cols());
-        assert(S_.isUppperTriangular());
+        assert(S_.isUpperTriangular());
     }
     /**
      * @brief Declare Gaussian class as a friend for all scalar types.
@@ -655,7 +655,7 @@ public:
         Scalar sum_log_diagS = (S_.diagonal().array().abs().log()).sum();
 
         // -(n/2) log(2pi) - sum log|diag(S)| - 0.5 ||w||^2
-        const Scalar const_term = -(Scalar(n) / Scalar(2)) * log(Scalar(2) * Scalar(3.14159265358979323846)); // compute the constant term
+        const Scalar const_term = -(Scalar(n) / Scalar(2)) * log(Scalar(2) * Scalar(std::numbers::pi)); // compute the constant term
         return const_term - sum_log_diagS - Scalar(0.5) * w.squaredNorm(); // return the log-likelihood
 
                 // Really bad version

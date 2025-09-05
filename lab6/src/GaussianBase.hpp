@@ -236,22 +236,15 @@ public:
         const double c  = normcdf(nSigma) - normcdf(-nSigma);
         const Scalar r  = Scalar(std::sqrt(chi2inv(c, 2.0)));
     
-        // angles in [0, 2π]
-        Eigen::Matrix<Scalar, 1, Eigen::Dynamic> t(1, nSamples);
-        const Scalar twoPi = Scalar(2.0) * Scalar(3.14159265358979323846);
-        for (int i = 0; i < nSamples; ++i) 
-        {
-            t(i) = twoPi * Scalar(i) / Scalar(nSamples - 1); // includes endpoint
-        }
+        // angles in [0, 2π] using vectorized operations
+        const Scalar twoPi = Scalar(2.0) * Scalar(std::numbers::pi);
+        Eigen::Matrix<Scalar, 1, Eigen::Dynamic> t = 
+            twoPi * Eigen::Matrix<Scalar, 1, Eigen::Dynamic>::LinSpaced(nSamples, Scalar(0), Scalar(1));
     
-        // circle samples in whitened coords
+        // circle samples in whitened coords using vectorized trig functions
         Eigen::Matrix<Scalar, 2, Eigen::Dynamic> W(2, nSamples);
-        using std::cos; using std::sin;
-        for (int i = 0; i < nSamples; ++i) 
-        {
-            W(0, i) = r * cos(t(i));
-            W(1, i) = r * sin(t(i));
-        }
+        W.row(0) = r * t.array().cos();
+        W.row(1) = r * t.array().sin();
     
         // map back: X = μ + Sᵀ W
         Eigen::Matrix<Scalar, 2, Eigen::Dynamic> X = sqrtCov().transpose() * W;

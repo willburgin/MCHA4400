@@ -540,10 +540,53 @@ void plot_simulation(
      *         \_______ /
      *  SOMEBODY TOUCHA MY SPAGHET!
      */ 
+        // true
+    line = bottomLeftChart->AddPlot(vtkChart::LINE);
+    line->SetInputData(table, TABLE_TIME, TABLE_BCOEFF_TRUE);
+    line->SetColor(255, 0, 0, 255);
+    line->SetWidth(linewidth);
+    line->SetLabel("true");
 
+    // mean
+    line = bottomLeftChart->AddPlot(vtkChart::LINE);
+    line->SetInputData(table, TABLE_TIME, TABLE_BCOEFF_EST);
+    line->SetColor(0, 0, 255, 255);
+    line->SetWidth(linewidth);
+    line->SetLabel("mean");
+
+    // 99.7% confidence region (±3σ)
+    area = dynamic_cast<vtkPlotArea*>(bottomLeftChart->AddPlot(vtkChart::AREA));
+    area->SetInputData(table);
+    area->SetInputArray(0, KEY(TABLE_TIME));
+    area->SetInputArray(1, KEY(TABLE_MU3_PLUS_SIGMA3));
+    area->SetInputArray(2, KEY(TABLE_MU3_MINUS_SIGMA3));
+    area->GetBrush()->SetColorF(0, 0, 1, 0.1);
+    area->SetLabel("99.7% CR");
+
+    // axis labels
+    bottomLeftChart->GetAxis(vtkAxis::BOTTOM)->SetTitle("Time (s)");
+    bottomLeftChart->GetAxis(vtkAxis::LEFT)->SetTitle("Ballistic Coeff. m^2/kg");
+    
+    // legend
+    bottomLeftChart->SetShowLegend(true);
+    bottomLeftChart->GetLegend()->SetHorizontalAlignment(vtkChartLegend::RIGHT);
+    bottomLeftChart->GetLegend()->SetVerticalAlignment(vtkChartLegend::TOP);
+    bottomLeftChart->GetLegend()->SetLabelSize(legend_fontsize);
+    
     // Bottom right plot (Ballistic coeff standard deviation vs Time)
     // -----------------------------------------------
+    line = bottomRightChart->AddPlot(vtkChart::LINE);
+    line->SetInputData(table, TABLE_TIME, TABLE_SIGMA3);
+    line->SetColor(0, 0, 255, 255);
+    line->SetWidth(linewidth);
+    bottomRightChart->SetShowLegend(false);
 
+    // axis labels
+    bottomRightChart->GetAxis(vtkAxis::BOTTOM)->SetTitle("Time (s)");
+    bottomRightChart->GetAxis(vtkAxis::LEFT)->SetTitle("Ballistic Coeff. m^2/kg");
+
+    // ensure vertical log axis
+    bottomRightChart->GetAxis(vtkAxis::LEFT)->SetLogScale(true);
     /*
      *          __.--,
      *     ,--'~-.,;=/
