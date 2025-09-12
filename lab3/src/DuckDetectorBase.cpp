@@ -51,14 +51,14 @@ void DuckDetectorBase::postprocess(const std::vector<float> & class_scores_data,
         int predicted_class = std::distance(query_class_scores, std::max_element(query_class_scores, query_class_scores + num_classes));
         float class_score = query_class_scores[predicted_class];
 
-        if (predicted_class == 1 && class_score > 0.5)
+        if (predicted_class == 1 && class_score > 0.5) // changed from 0.5
         {
             cv::Mat query_mask(mask_height, mask_width, CV_32F, const_cast<float *>(mask_probs_data.data() + query*mask_height*mask_width));
             cv::Mat resized_query_mask;
             cv::resize(query_mask, resized_query_mask, imgout.size(), 0, 0, cv::INTER_LINEAR);
 
             cv::Mat binary_mask;
-            cv::threshold(resized_query_mask, binary_mask, 0.5, 1, cv::THRESH_BINARY);
+            cv::threshold(resized_query_mask, binary_mask, 0.5, 1, cv::THRESH_BINARY); // changing from 0.5 
             binary_mask.convertTo(binary_mask, CV_8U);
 
             cv::Moments m = cv::moments(binary_mask, true);
