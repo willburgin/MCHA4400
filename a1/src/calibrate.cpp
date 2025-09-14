@@ -30,6 +30,7 @@ void calibrateCamera(const std::filesystem::path & configPath)
     outputFs<<"camera"<<camera; 
     outputFs.release();
 
+    // Visualisation
     chessboardData.drawCorners();
     for (const auto & chessboardImage : chessboardData.chessboardImages)
     {
