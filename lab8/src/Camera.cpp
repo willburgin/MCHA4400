@@ -435,6 +435,103 @@ cv::Vec2d Camera::vectorToPixel(const cv::Vec3d & rPCc) const
     return rQOi;
 }
 
+Eigen::Vector2d Camera::vectorToPixel(const Eigen::Vector3d & rPCc, Eigen::Matrix23d & J) const
+{
+    // Extract camera intrinsic parameters
+    double fx = cameraMatrix.at<double>(0, 0);
+    double fy = cameraMatrix.at<double>(1, 1);
+    double cx = cameraMatrix.at<double>(0, 2);
+    double cy = cameraMatrix.at<double>(1, 2);
+    
+    // Extract distortion coefficients (rational + thin prism model)
+    double k1 = distCoeffs.at<double>(0);
+    double k2 = distCoeffs.at<double>(1);
+    double p1 = distCoeffs.at<double>(2);
+    double p2 = distCoeffs.at<double>(3);
+    double k3 = distCoeffs.at<double>(4);
+    double k4 = distCoeffs.at<double>(5);
+    double k5 = distCoeffs.at<double>(6);
+    double k6 = distCoeffs.at<double>(7);
+    double s1 = distCoeffs.at<double>(8);
+    double s2 = distCoeffs.at<double>(9);
+    double s3 = distCoeffs.at<double>(10);
+    double s4 = distCoeffs.at<double>(11);
+    
+    // Extract coordinates from camera vector
+    double x = rPCc[0];
+    double y = rPCc[1];
+    double z = rPCc[2];
+    
+    // Normalized coordinates (equations 2 from PDF)
+    double u = x / z;
+    double v = y / z;
+    
+    // Radius squared
+    double r2 = u * u + v * v;
+    double r4 = r2 * r2;
+    double r6 = r4 * r2;
+    
+    // Rational distortion model coefficients (equations 4-5)
+    double alpha = k1 * r2 + k2 * r4 + k3 * r6;
+    double beta = k4 * r2 + k5 * r4 + k6 * r6;
+    
+    // Radial distortion coefficient (equation 3)
+    double c = (1 + alpha) / (1 + beta);
+    
+    // Distorted coordinates with radial, decentering, and thin prism distortion (equation 1)
+    double u_prime = c * u + (2 * p1 * u * v + p2 * (r2 + 2 * u * u)) + (s1 * r2 + s2 * r4);
+    double v_prime = c * v + (p1 * (r2 + 2 * v * v) + 2 * p2 * u * v) + (s3 * r2 + s4 * r4);
+    
+    // Final pixel coordinates (equation 6)
+    Eigen::Vector2d rQOi;
+    rQOi[0] = fx * u_prime + cx;  // u coordinate
+    rQOi[1] = fy * v_prime + cy;  // v coordinate
+    
+    // Compute analytical Jacobian ∂r'Q/O,i/∂rPCc (equation 26 from Appendix A)
+    
+    // First compute intermediate derivatives (equations 15-25)
+    
+    // ∂u/∂rPCc and ∂v/∂rPCc (equations 15-16)
+    double du_dx = 1.0 / z;
+    double du_dy = 0.0;
+    double du_dz = -x / (z * z);
+    
+    double dv_dx = 0.0;
+    double dv_dy = 1.0 / z;
+    double dv_dz = -y / (z * z);
+    
+    // ∂r/∂u and ∂r/∂v (equations 17-18)
+    double r = std::sqrt(r2);
+    double dr_du = (r > 0) ? u / r : 0.0;  // Handle r = 0 case
+    double dr_dv = (r > 0) ? v / r : 0.0;
+    
+    // ∂α/∂r and ∂β/∂r (equations 19-20)
+    double dalpha_dr = 2 * k1 * r + 4 * k2 * r * r2 + 6 * k3 * r * r4;
+    double dbeta_dr = 2 * k4 * r + 4 * k5 * r * r2 + 6 * k6 * r * r4;
+    
+    // ∂c/∂r (equation 21)
+    double dc_dr = (dalpha_dr * (1 + beta) - (1 + alpha) * dbeta_dr) / ((1 + beta) * (1 + beta));
+    
+    // ∂u'/∂u and ∂u'/∂v (equations 22-23)
+    double du_prime_du = (dc_dr * dr_du) * u + c + 2 * p1 * v + p2 * (2 * dr_du * r + 4 * u) + 2 * s1 * dr_du * r + 4 * s2 * r * r2 * dr_du;
+    double du_prime_dv = (dc_dr * dr_dv) * u + 2 * p1 * u + p2 * (2 * dr_dv * r) + 2 * s1 * dr_dv * r + 4 * s2 * r * r2 * dr_dv;
+    
+    // ∂v'/∂u and ∂v'/∂v (equations 24-25)
+    double dv_prime_du = (dc_dr * dr_du) * v + p1 * (2 * dr_du * r) + 2 * p2 * v + 2 * s3 * dr_du * r + 4 * s4 * r * r2 * dr_du;
+    double dv_prime_dv = (dc_dr * dr_dv) * v + c + p1 * (2 * dr_dv * r + 4 * v) + 2 * p2 * u + 2 * s3 * dr_dv * r + 4 * s4 * r * r2 * dr_dv;
+    
+    // Final Jacobian ∂r'Q/O,i/∂rPCc (equation 26)
+    J(0, 0) = fx * (du_prime_du * du_dx + du_prime_dv * dv_dx);  // ∂u'/∂x
+    J(0, 1) = fx * (du_prime_du * du_dy + du_prime_dv * dv_dy);  // ∂u'/∂y  
+    J(0, 2) = fx * (du_prime_du * du_dz + du_prime_dv * dv_dz);  // ∂u'/∂z
+    
+    J(1, 0) = fy * (dv_prime_du * du_dx + dv_prime_dv * dv_dx);  // ∂v'/∂x
+    J(1, 1) = fy * (dv_prime_du * du_dy + dv_prime_dv * dv_dy);  // ∂v'/∂y
+    J(1, 2) = fy * (dv_prime_du * du_dz + dv_prime_dv * dv_dz);  // ∂v'/∂z
+    
+    return rQOi;
+}
+
 cv::Vec3d Camera::pixelToVector(const cv::Vec2d & rQOi) const
 {
     // Compute unit vector (uPCc) for the given pixel location (rQOi)

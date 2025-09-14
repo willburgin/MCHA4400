@@ -50,10 +50,12 @@ Eigen::Vector2<Scalar> MeasurementPointBundle::predictFeature(const Eigen::Vecto
     // Camera vector
     Eigen::Vector3<Scalar> rPCc;
     // TODO: Lab 8
+    rPCc = Tnc.rotationMatrix.transpose() * (rPNn - Tnc.translationVector);
 
     // Pixel coordinates
     Eigen::Vector2<Scalar> rQOi;
     // TODO: Lab 8
+    rQOi = camera_.vectorToPixel(rPCc);  
     return rQOi;
 }
 

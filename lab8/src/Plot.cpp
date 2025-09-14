@@ -190,19 +190,18 @@ void QuadricPlot::update(const GaussianInfo<double> & positionDensity)
     Eigen::Matrix4d Q = positionDensity.quadricSurface(3);
     double a0, a1, a2, a3, a4, a5, a6, a7, a8, a9;
     
-    a0 = 0;     // TODO: Lab 8
-    a1 = 0;     // TODO: Lab 8
-    a2 = 0;     // TODO: Lab 8
-    a3 = 0;     // TODO: Lab 8
-    a4 = 0;     // TODO: Lab 8
-    a5 = 0;     // TODO: Lab 8
-    a6 = 0;     // TODO: Lab 8
-    a7 = 0;     // TODO: Lab 8
-    a8 = 0;     // TODO: Lab 8
-    a9 = 0;     // TODO: Lab 8
+    a0 = Q(0,0);     // TODO: Lab 8
+    a1 = Q(1,1);     // TODO: Lab 8
+    a2 = Q(2,2);     // TODO: Lab 8
+    a3 = 2 * Q(0,1);     // TODO: Lab 8
+    a4 = 2 * Q(1,2);     // TODO: Lab 8
+    a5 = 2 * Q(0,2);     // TODO: Lab 8
+    a6 = 2 * Q(0,3);     // TODO: Lab 8
+    a7 = 2 * Q(1,3);     // TODO: Lab 8
+    a8 = 2 * Q(2,3);     // TODO: Lab 8
+    a9 = Q(3,3);     // TODO: Lab 8
 
     quadric->SetCoefficients(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);
-
     double boundsVTK[6];
     bounds.getVTKBounds(boundsVTK);
     sample->SetModelBounds(boundsVTK);
@@ -513,11 +512,11 @@ Plot::Plot(const Camera & camera)
     double windowWidth        = 2*aspectRatio*windowHeight;
 
     vtkNew<vtkNamedColors> colors;
-    double quadricViewport[4]       = {0.5, 0.0, 1.0, 1.0};
+    double quadricViewport[4]       = {0.8, 0.0, 1.0, 1.0};
     threeDimRenderer->SetViewport(quadricViewport);
     threeDimRenderer->SetBackground(colors->GetColor3d("slategray").GetData());
 
-    double imageViewport[4]         = {0.0, 0.0, 0.5, 1.0};
+    double imageViewport[4]         = {0.0, 0.0, 0.8, 1.0};
     imageRenderer->SetViewport(imageViewport);
     imageRenderer->SetBackground(colors->GetColor3d("white").GetData());
 

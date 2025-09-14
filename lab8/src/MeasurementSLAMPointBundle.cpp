@@ -11,6 +11,7 @@
 #include "Measurement.h"
 #include "MeasurementSLAM.h"
 #include "MeasurementSLAMPointBundle.h"
+#include "rotation.hpp"
 
 MeasurementPointBundle::MeasurementPointBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
@@ -80,11 +81,72 @@ void MeasurementPointBundle::update(SystemBase & system)
 // Image feature location for a given landmark and Jacobian
 Eigen::Vector2d MeasurementPointBundle::predictFeature(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, std::size_t idxLandmark) const
 {
-    // Set elements of J
-    // TODO: Lab 8 (optional)
+    // Get camera pose from state
+    Pose<double> Tnc;
+    Tnc.translationVector = system.cameraPosition(camera_, x); // rCNn
+    Tnc.rotationMatrix = system.cameraOrientation(camera_, x); // Rnc
 
-    // --------- Done ----------
-    return predictFeature(x, system, idxLandmark);
+    // Get landmark position from state
+    std::size_t idx = system.landmarkPositionIndex(idxLandmark);
+    Eigen::Vector3d rPNn = x.segment<3>(idx);
+
+    // Transform to camera coordinates
+    Eigen::Vector3d rPCc = Tnc.rotationMatrix.transpose() * (rPNn - Tnc.translationVector);
+
+    // Get pixel coordinates with Jacobian w.r.t. camera coordinates
+    Eigen::Matrix23d J_camera;  // ← Fixed: Different name from parameter
+    Eigen::Vector2d rQOi = camera_.vectorToPixel(rPCc, J_camera);
+
+    // Compute full Jacobian ∂h/∂x using chain rule and Appendix B expressions
+    J.resize(2, x.size());  // ← Fixed: Use parameter name J, not h
+    J.setZero();
+
+    // Extract state components
+    Eigen::Vector3d rBNn = x.segment<3>(6);
+    Eigen::Vector3d Thetanb = x.segment<3>(9);
+
+    // Get body pose
+    Pose<double> Tnb;
+    Tnb.rotationMatrix = rpy2rot(Thetanb);
+    Tnb.translationVector = rBNn;
+
+    // Get camera-to-body transformation
+    Pose<double> Tbc = camera_.Tbc;
+    Eigen::Matrix3d Rnb = Tnb.rotationMatrix;
+    Eigen::Matrix3d Rbc = Tbc.rotationMatrix;
+
+    // Equation (27a): ∂h_j/∂r^n_{j/N} 
+    Eigen::Matrix<double, 2, 3> dhj_drPNn = J_camera * Rbc.transpose() * Rnb.transpose();
+    J.block<2, 3>(0, idx) = dhj_drPNn;
+
+    // Equation (27b): ∂h_j/∂r^n_{B/N}
+    Eigen::Matrix<double, 2, 3> dhj_drBNn = -J_camera * Rbc.transpose() * Rnb.transpose();
+    J.block<2, 3>(0, 6) = dhj_drBNn;
+
+    Eigen::Vector3d rPNn_minus_rBNn = rPNn - rBNn;
+
+    // ∂R^n_b/∂φ (roll) - Fixed: These should be 3×3 matrices
+    Eigen::Matrix3d dRx_dphi;
+    rotx(Thetanb(0), dRx_dphi);
+    Eigen::Matrix3d dRnb_dphi = rotz(Thetanb(2)) * roty(Thetanb(1)) * dRx_dphi;
+
+    // ∂R^n_b/∂θ (pitch)  
+    Eigen::Matrix3d dRy_dtheta;
+    roty(Thetanb(1), dRy_dtheta);
+    Eigen::Matrix3d dRnb_dtheta = rotz(Thetanb(2)) * dRy_dtheta * rotx(Thetanb(0));
+
+    // ∂R^n_b/∂ψ (yaw)
+    Eigen::Matrix3d dRz_dpsi;
+    rotz(Thetanb(2), dRz_dpsi);
+    Eigen::Matrix3d dRnb_dpsi = dRz_dpsi * roty(Thetanb(1)) * rotx(Thetanb(0));
+
+    // // // Apply equation (27c) for each Euler angle
+    J.col(9)  = J_camera * Rbc.transpose() * dRnb_dphi.transpose() * rPNn_minus_rBNn;     // ∂h_j/∂φ
+    J.col(10) = J_camera * Rbc.transpose() * dRnb_dtheta.transpose() * rPNn_minus_rBNn;  // ∂h_j/∂θ  
+    J.col(11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rPNn_minus_rBNn;    // ∂h_j/∂ψ
+    // std::cout << "J: " << J << std::endl;
+
+    return rQOi;
 }
 
 // Density of image feature location for a given landmark
