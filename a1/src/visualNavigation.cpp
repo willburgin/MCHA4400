@@ -2,8 +2,11 @@
 #include <string>
 #include <iostream>
 #include <opencv2/core/mat.hpp>
+#include <opencv2/opencv.hpp>
 #include "BufferedVideo.h"
 #include "visualNavigation.h"
+#include "imagefeatures.h"
+#include "Camera.h"
 
 void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const std::filesystem::path & cameraPath, int scenario, int interactive, const std::filesystem::path & outputDirectory)
 {
@@ -21,8 +24,14 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     }
 
     // Load camera calibration
+    Camera camera;
+    assert(std::filesystem::exists(cameraPath));
+    cv::FileStorage fs(cameraPath.string(), cv::FileStorage::READ);
+    assert(fs.isOpened());
+    fs["camera"] >> camera;
 
     // Display loaded calibration data
+    camera.printCalibration();
 
     // Open input video
     cv::VideoCapture cap(videoPath.string());
@@ -59,7 +68,17 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         {
             break;
         }
-
+        double dt = 1/fps;
+        cv::Mat outputFrame;
+        if (scenario == 1)
+        {
+            outputFrame = detectAndDrawArUco(imgin, 20);
+        }
+        else if (scenario == 3)
+        {
+            outputFrame = detectAndDrawShiAndTomasi(imgin, 20);
+        }
+        
         // Process frame
 
         // Update state
@@ -67,9 +86,16 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         // Update plot
 
         // Write output frame 
+        // TODO: Display image returned from detectAndDraw on screen and wait for 1000/fps milliseconds
+        cv::imshow("Video Feature Detection", outputFrame);
+        int delay = static_cast<int>(1000.0 / fps);
+        if (cv::waitKey(delay) == 27) 
+        {
+            break;
+        }
         if (doExport)
         {
-            cv::Mat imgout /* = plot.getFrame()*/; // TODO: Uncomment this to get the frame image
+            cv::Mat imgout; /* plot.getFrame();*/ // TODO: Uncomment this to get the frame image
             bufferedVideoWriter.write(imgout);
         }
     }
