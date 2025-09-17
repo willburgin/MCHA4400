@@ -141,9 +141,9 @@ Eigen::Vector2d MeasurementPointBundle::predictFeature(const Eigen::VectorXd & x
     Eigen::Matrix3d dRnb_dpsi = dRz_dpsi * roty(Thetanb(1)) * rotx(Thetanb(0));
 
     // // // Apply equation (27c) for each Euler angle
-    J.col(9)  = J_camera * Rbc.transpose() * dRnb_dphi.transpose() * rPNn_minus_rBNn;     // ∂h_j/∂φ
-    J.col(10) = J_camera * Rbc.transpose() * dRnb_dtheta.transpose() * rPNn_minus_rBNn;  // ∂h_j/∂θ  
-    J.col(11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rPNn_minus_rBNn;    // ∂h_j/∂ψ
+    J.col(9)  = J_camera * Rbc.transpose() * dRnb_dphi.transpose() * rPNn_minus_rBNn;    
+    J.col(10) = J_camera * Rbc.transpose() * dRnb_dtheta.transpose() * rPNn_minus_rBNn;  
+    J.col(11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rPNn_minus_rBNn;   
     // std::cout << "J: " << J << std::endl;
 
     return rQOi;

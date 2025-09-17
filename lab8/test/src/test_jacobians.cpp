@@ -6,7 +6,6 @@
 #include "../../src/Camera.h"
 #include "../../src/MeasurementSLAMPointBundle.h"
 #include "../../src/SystemSLAMPointLandmarks.h"
-s
 #ifndef CAPTURE_EIGEN
 #define CAPTURE_EIGEN(x) \
     INFO(#x " =\n" << x.format(Eigen::IOFormat(Eigen::FullPrecision, 0, ", ", ";\n", "", "", "[", "]")));

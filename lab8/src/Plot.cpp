@@ -508,15 +508,15 @@ Plot::Plot(const Camera & camera)
 {
     double aspectRatio  = (1.0*camera.imageSize.width)/camera.imageSize.height;
 
-    double windowHeight       = 2*540;
+    double windowHeight       = 1*540;
     double windowWidth        = 2*aspectRatio*windowHeight;
 
     vtkNew<vtkNamedColors> colors;
-    double quadricViewport[4]       = {0.8, 0.0, 1.0, 1.0};
+    double quadricViewport[4]       = {0.5, 0.0, 1.0, 1.0};
     threeDimRenderer->SetViewport(quadricViewport);
     threeDimRenderer->SetBackground(colors->GetColor3d("slategray").GetData());
 
-    double imageViewport[4]         = {0.0, 0.0, 0.8, 1.0};
+    double imageViewport[4]         = {0.0, 0.0, 0.5, 1.0};
     imageRenderer->SetViewport(imageViewport);
     imageRenderer->SetBackground(colors->GetColor3d("white").GetData());
 
