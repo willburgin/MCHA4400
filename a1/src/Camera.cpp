@@ -7,8 +7,9 @@
 #include <vector>
 #include <filesystem>
 #include <regex>
-#include <algorithm>
 #include <print>
+#include <Eigen/Core>
+#include <opencv2/core/eigen.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/persistence.hpp>
@@ -17,65 +18,9 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/calib3d.hpp>
 #include "to_string.hpp"
+#include "rotation.hpp"
+#include "Pose.hpp"
 #include "Camera.h"
-
-// Default constructor (R = I, r = 0)
-Pose::Pose()
-    : rotationMatrix(cv::Matx33d::eye())
-    , translationVector(cv::Vec3d::zeros())
-{}
-
-// Constructor from OpenCV rotation vector and translation vector
-Pose::Pose(const cv::Mat & rvec, const cv::Mat & tvec)
-{
-    cv::Rodrigues(rvec, rotationMatrix);
-    translationVector = tvec;
-}
-
-// Group operation of SE(3)
-//
-// Tac = Tab*Tbc
-//
-// [ Rac, rCAa ] = [ Rab, rBAa ] * [ Rbc, rCBb ] = [ Rab*Rbc, Rab*rCBb + rBAa ]
-// [   0,    1 ]   [   0,    1 ]   [   0,    1 ]   [       0,               1 ]
-//
-Pose Pose::operator*(const Pose & other) const
-{
-    Pose result;
-    result.rotationMatrix = rotationMatrix * other.rotationMatrix;
-    result.translationVector = rotationMatrix * other.translationVector + translationVector;
-    return result;
-}
-
-// Action of SE(3) on P3
-//
-// Point alias: pPAa = Tab*pPBb
-// [ rPAa ] = [ Rab, rBAa ] * [ rPBb ] = [ Rab*rPBb + rBAa ] 
-// [    1 ]   [   0,    1 ]   [    1 ]   [               1 ]
-//
-// Point alibi: pBPa = Tab*pAPb
-// [ rBPa ] = [ Rab, rBAa ] * [ rAPb ] = [ Rab*rAPb + rBAa ] 
-// [    1 ]   [   0,    1 ]   [    1 ]   [               1 ]
-//
-cv::Vec3d Pose::operator*(const cv::Vec3d & r) const
-{
-    return rotationMatrix * r + translationVector;
-}
-
-// Inverse element in SE(3)
-//
-// Tab^-1 = Tba
-//
-// [ Rab, rBAa ]^-1 = [ Rba, rABb ] = [ Rab^T, -Rab^T*rBAa ]
-// [   0,    1 ]      [   0,    1 ]   [     0,           1 ]
-//
-Pose Pose::inverse() const
-{
-    Pose result;
-    result.rotationMatrix = rotationMatrix.t();
-    result.translationVector = -result.rotationMatrix * translationVector;
-    return result;
-}
 
 void Chessboard::write(cv::FileStorage & fs) const
 {
@@ -208,7 +153,7 @@ void ChessboardImage::recoverPose(const Chessboard & chessboard, const Camera & 
     cv::Mat Thetacn, rNCc;
     cv::solvePnP(rPNn_all, corners, camera.cameraMatrix, camera.distCoeffs, Thetacn, rNCc);
 
-    Pose Tcn(Thetacn, rNCc);
+    Pose<double> Tcn(Thetacn, rNCc);
     Tnc = Tcn.inverse();
 }
 
@@ -385,10 +330,10 @@ void Camera::calibrate(ChessboardData & chessboardData)
     for (std::size_t k = 0; k < chessboardData.chessboardImages.size(); ++k)
     {
         // Set the camera orientation and position (extrinsic camera parameters)
-        Pose & Tnc = chessboardData.chessboardImages[k].Tnc;
+        Pose<double> & Tnc = chessboardData.chessboardImages[k].Tnc;
         // OpenCV tells us: where is the world origin with respect to the camera in camera frame coordinates
         // We want where is the camera in the world frame in world coordinates
-        Pose Tcn(Thetacn_all[k], rNCc_all[k]);
+        Pose<double> Tcn(Thetacn_all[k], rNCc_all[k]);
         Tnc = Tcn.inverse(); // rCNn
     }
     
@@ -429,6 +374,7 @@ void Camera::calcFieldOfView()
     cv::Vec2d left_pixel(0, height / 2.0);
     cv::Vec2d right_pixel(width - 1, height / 2.0);
 
+    cv::Vec3d u_center = pixelToVector(center);
     cv::Vec3d u_left = pixelToVector(left_pixel);
     cv::Vec3d u_right = pixelToVector(right_pixel);
 
@@ -457,23 +403,10 @@ void Camera::calcFieldOfView()
     dFOV = std::abs(angle_br + angle_tl);  // total diagonal FOV
 }
 
-
-Pose Camera::cameraToBody(const Pose & Tnc) const
-{
-    // Tnb = Tnc*Tcb
-    return Tnc*Tbc.inverse();
-}
-
-Pose Camera::bodyToCamera(const Pose & Tnb) const
-{
-    // Tnc = Tnb*Tbc
-    return Tnb*Tbc;
-}
-
-cv::Vec3d Camera::worldToVector(const cv::Vec3d & rPNn, const Pose & Tnb) const
+cv::Vec3d Camera::worldToVector(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
 {
     // Camera pose Tnc (i.e., Rnc, rCNn)
-    Pose Tnc = bodyToCamera(Tnb); // Tnb*Tbc
+    Pose<double> Tnc = bodyToCamera(Tnb); // Tnb*Tbc
 
     // Compute the unit vector uPCc from the world position rPNn and camera pose Tnc
     // TODO
@@ -482,7 +415,7 @@ cv::Vec3d Camera::worldToVector(const cv::Vec3d & rPNn, const Pose & Tnb) const
     return uPCc;
 }
 
-cv::Vec2d Camera::worldToPixel(const cv::Vec3d & rPNn, const Pose & Tnb) const
+cv::Vec2d Camera::worldToPixel(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
 {
     return vectorToPixel(worldToVector(rPNn, Tnb));
 }
@@ -498,6 +431,104 @@ cv::Vec2d Camera::vectorToPixel(const cv::Vec3d & rPCc) const
     cv::projectPoints(objectPoints, cv::Vec3d(0, 0, 0), cv::Vec3d(0, 0, 0), cameraMatrix, distCoeffs, rQOi_vec); // planar camera model.
     
     rQOi = cv::Vec2d(rQOi_vec[0].x, rQOi_vec[0].y);
+
+    return rQOi;
+}
+
+Eigen::Vector2d Camera::vectorToPixel(const Eigen::Vector3d & rPCc, Eigen::Matrix23d & J) const
+{
+    // Extract camera intrinsic parameters
+    double fx = cameraMatrix.at<double>(0, 0);
+    double fy = cameraMatrix.at<double>(1, 1);
+    double cx = cameraMatrix.at<double>(0, 2);
+    double cy = cameraMatrix.at<double>(1, 2);
+    
+    // Extract distortion coefficients (rational + thin prism model)
+    double k1 = distCoeffs.at<double>(0);
+    double k2 = distCoeffs.at<double>(1);
+    double p1 = distCoeffs.at<double>(2);
+    double p2 = distCoeffs.at<double>(3);
+    double k3 = distCoeffs.at<double>(4);
+    double k4 = distCoeffs.at<double>(5);
+    double k5 = distCoeffs.at<double>(6);
+    double k6 = distCoeffs.at<double>(7);
+    double s1 = distCoeffs.at<double>(8);
+    double s2 = distCoeffs.at<double>(9);
+    double s3 = distCoeffs.at<double>(10);
+    double s4 = distCoeffs.at<double>(11);
+    
+    // Extract coordinates from camera vector
+    double x = rPCc[0];
+    double y = rPCc[1];
+    double z = rPCc[2];
+    
+    // Normalized coordinates (equations 2 from PDF)
+    double u = x / z;
+    double v = y / z;
+    
+    // Radius squared
+    double r2 = u * u + v * v;
+    double r4 = r2 * r2;
+    double r6 = r4 * r2;
+    
+    // Rational distortion model coefficients (equations 4-5)
+    double alpha = k1 * r2 + k2 * r4 + k3 * r6;
+    double beta = k4 * r2 + k5 * r4 + k6 * r6;
+    
+    // Radial distortion coefficient (equation 3)
+    double c = (1 + alpha) / (1 + beta);
+    
+    // Distorted coordinates with radial, decentering, and thin prism distortion (equation 1)
+    double u_prime = c * u + (2 * p1 * u * v + p2 * (r2 + 2 * u * u)) + (s1 * r2 + s2 * r4);
+    double v_prime = c * v + (p1 * (r2 + 2 * v * v) + 2 * p2 * u * v) + (s3 * r2 + s4 * r4);
+    
+    // Final pixel coordinates (equation 6)
+    Eigen::Vector2d rQOi;
+    rQOi[0] = fx * u_prime + cx;  // u coordinate
+    rQOi[1] = fy * v_prime + cy;  // v coordinate
+    
+    // Compute analytical Jacobian ∂r'Q/O,i/∂rPCc (equation 26 from Appendix A)
+    
+    // First compute intermediate derivatives (equations 15-25)
+    
+    // ∂u/∂rPCc and ∂v/∂rPCc (equations 15-16)
+    double du_dx = 1.0 / z;
+    double du_dy = 0.0;
+    double du_dz = -x / (z * z);
+    
+    double dv_dx = 0.0;
+    double dv_dy = 1.0 / z;
+    double dv_dz = -y / (z * z);
+    
+    // ∂r/∂u and ∂r/∂v (equations 17-18)
+    double r = std::sqrt(r2);
+    double dr_du = (r > 0) ? u / r : 0.0;  // Handle r = 0 case
+    double dr_dv = (r > 0) ? v / r : 0.0;
+    
+    // ∂α/∂r and ∂β/∂r (equations 19-20)
+    double dalpha_dr = 2 * k1 * r + 4 * k2 * r * r2 + 6 * k3 * r * r4;
+    double dbeta_dr = 2 * k4 * r + 4 * k5 * r * r2 + 6 * k6 * r * r4;
+    
+    // ∂c/∂r (equation 21)
+    double dc_dr = (dalpha_dr * (1 + beta) - (1 + alpha) * dbeta_dr) / ((1 + beta) * (1 + beta));
+    
+    // ∂u'/∂u and ∂u'/∂v (equations 22-23)
+    double du_prime_du = (dc_dr * dr_du) * u + c + 2 * p1 * v + p2 * (2 * dr_du * r + 4 * u) + 2 * s1 * dr_du * r + 4 * s2 * r * r2 * dr_du;
+    double du_prime_dv = (dc_dr * dr_dv) * u + 2 * p1 * u + p2 * (2 * dr_dv * r) + 2 * s1 * dr_dv * r + 4 * s2 * r * r2 * dr_dv;
+    
+    // ∂v'/∂u and ∂v'/∂v (equations 24-25)
+    double dv_prime_du = (dc_dr * dr_du) * v + p1 * (2 * dr_du * r) + 2 * p2 * v + 2 * s3 * dr_du * r + 4 * s4 * r * r2 * dr_du;
+    double dv_prime_dv = (dc_dr * dr_dv) * v + c + p1 * (2 * dr_dv * r + 4 * v) + 2 * p2 * u + 2 * s3 * dr_dv * r + 4 * s4 * r * r2 * dr_dv;
+    
+    // Final Jacobian ∂r'Q/O,i/∂rPCc (equation 26)
+    J(0, 0) = fx * (du_prime_du * du_dx + du_prime_dv * dv_dx);  // ∂u'/∂x
+    J(0, 1) = fx * (du_prime_du * du_dy + du_prime_dv * dv_dy);  // ∂u'/∂y  
+    J(0, 2) = fx * (du_prime_du * du_dz + du_prime_dv * dv_dz);  // ∂u'/∂z
+    
+    J(1, 0) = fy * (dv_prime_du * du_dx + dv_prime_dv * dv_dx);  // ∂v'/∂x
+    J(1, 1) = fy * (dv_prime_du * du_dy + dv_prime_dv * dv_dy);  // ∂v'/∂y
+    J(1, 2) = fy * (dv_prime_du * du_dz + dv_prime_dv * dv_dz);  // ∂v'/∂z
+    
     return rQOi;
 }
 
@@ -534,7 +565,7 @@ bool Camera::isVectorWithinFOV(const cv::Vec3d & rPCc) const
     return angle <= dFOV / 2.0;
 }
 
-bool Camera::isWorldWithinFOV(const cv::Vec3d & rPNn, const Pose & Tnb) const
+bool Camera::isWorldWithinFOV(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
 {
     return isVectorWithinFOV(worldToVector(rPNn, Tnb));
 }
