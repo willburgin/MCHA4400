@@ -299,7 +299,6 @@ cv::Mat detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
     cv::aruco::ArucoDetector detector(dictionary, detectorParams);
 
     detector.detectMarkers(gray, markerCorners, markerIds, rejectedCandidates);
-   
     std::println("Image width: {}", img.cols);
     std::println("Image height: {}", img.rows);
     std::println("Marker Corners: {}",   markerIds.size());

@@ -40,6 +40,8 @@ public:
     template <typename Scalar> static Eigen::Vector3<Scalar> cameraOrientationEuler(const Camera & cam, const Eigen::VectorX<Scalar> & x);
     static Eigen::Vector3d cameraOrientationEuler(const Camera & cam, const Eigen::VectorXd & x, Eigen::MatrixXd & J);
 
+    template <typename Scalar> static Eigen::VectorX<Scalar> dynamics(const Eigen::VectorX<Scalar> & x, const Eigen::VectorX<Scalar> & u);
+
     virtual GaussianInfo<double> cameraPositionDensity(const Camera & cam) const;
     virtual GaussianInfo<double> cameraOrientationEulerDensity(const Camera & cam) const;
 
@@ -81,6 +83,26 @@ template <typename Scalar>
 Eigen::Vector3<Scalar> SystemSLAM::cameraOrientationEuler(const Camera & camera, const Eigen::VectorX<Scalar> & x)
 {
     return rot2rpy(cameraOrientation(camera, x));
+}
+
+template <typename Scalar>
+Eigen::VectorX<Scalar> SystemSLAM::dynamics(const Eigen::VectorX<Scalar> & x, const Eigen::VectorX<Scalar> & u)
+{
+    // Same logic as the non-templated version but with Scalar types
+    Eigen::VectorX<Scalar> f(x.size());
+    f.setZero();
+    
+    // Extract nu and eta
+    Eigen::Matrix<Scalar, 6, 1> nu = x.template segment<6>(0);
+    Eigen::Matrix<Scalar, 6, 1> eta = x.template segment<6>(6);
+    
+    // Compute kinematic transformation matrix
+    Eigen::Matrix<Scalar, 6, 6> J_eta = eulerKinematicTransformation(eta);
+    
+    // Apply transformation: f = J_eta * nu
+    f.template segment<6>(6) = J_eta * nu;
+    
+    return f;
 }
 
 #endif

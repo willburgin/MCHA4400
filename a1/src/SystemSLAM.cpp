@@ -6,6 +6,7 @@
 #include "GaussianInfo.hpp"
 #include "SystemEstimator.h"
 #include "SystemSLAM.h"
+#include "rotation.hpp"
 
 SystemSLAM::SystemSLAM(const GaussianInfo<double> & density)
     : SystemEstimator(density)
@@ -35,13 +36,11 @@ Eigen::VectorXd SystemSLAM::dynamics(double t, const Eigen::VectorXd & x, const 
     Eigen::VectorXd f(x.size());
     f.setZero();
     // TODO: Implement in Assignment(s)
-    Eigen::Vector3d Thetanb = x.segment<3>(9);
-    Eigen::Vector3d vBNb = x.segment<3>(0);
-    Eigen::Vector3d omegaBNb = x.segment<3>(3);
-
-    f.segment<3>(0) = rpy2rot(Thetanb) * vBNb;
-    // f.segment<3>(3) = TK(Thetanb) * omegaBNb;
-
+    // set nu and eta
+    Eigen::Vector6d nu = x.segment<6>(0);
+    Eigen::Vector6d eta = x.segment<6>(6);
+    Eigen::Matrix<double, 6, 6> J_eta = eulerKinematicTransformation(eta);
+    f.segment<6>(6) = J_eta * nu;
     return f;
 }
 
@@ -58,9 +57,51 @@ Eigen::VectorXd SystemSLAM::dynamics(double t, const Eigen::VectorXd & x, const 
     //
     J.resize(f.size(), x.size());
     J.setZero();
-    // TODO: Implement in Assignment(s)
-
-
+    // build dRnb(thetanb)vBNb/dvBNb
+    // extract states
+    double ustate = x(0);
+    double v = x(1);
+    double w = x(2);
+    double q = x(4);
+    double r = x(5);
+    double phi = x(9);
+    double theta = x(10);
+    double psi = x(11);
+    Eigen::Vector3d Thetanb = Eigen::Vector3d(phi, theta, psi);
+    double cphi = std::cos(phi);
+    double sphi = std::sin(phi);
+    double ctheta = std::cos(theta);
+    double stheta = std::sin(theta);
+    double cpsi = std::cos(psi);
+    double spsi = std::sin(psi);
+    double ttheta = std::tan(theta);
+    double sec_theta = 1 / std::cos(theta);
+    // build matrix
+    Eigen::Matrix3d dRnb_dvBNb = rpy2rot(Thetanb);
+    Eigen::Matrix3d dRnb_dThetanb = Eigen::Matrix3d::Zero();
+    dRnb_dThetanb(0,0) = (spsi * sphi + cpsi * stheta * cphi) * v + (spsi * cphi - cpsi * sphi * stheta) * w; // df1/dphi   
+    dRnb_dThetanb(0,1) = -cpsi * stheta * ustate + cpsi * ctheta * sphi * v + cpsi * cphi * ctheta * w; // df1/dtheta
+    dRnb_dThetanb(0,2) = -spsi * ctheta * ustate - (cpsi * cphi + spsi * stheta * sphi) * v + (cpsi * sphi - spsi * cphi * stheta) * w; // df1/dpsi
+    dRnb_dThetanb(1,0) = (-cpsi * sphi + cphi * stheta * spsi) * v + (-cpsi * cphi - spsi * sphi * stheta) * w; // df2/dphi
+    dRnb_dThetanb(1,1) = -spsi * stheta * ustate + sphi * ctheta * spsi * v + spsi * cphi * ctheta * w; // df2/dtheta
+    dRnb_dThetanb(1,2) = cpsi * ctheta * ustate -(spsi * cphi - sphi * stheta * cpsi) * v + (spsi * sphi + cpsi * cphi * stheta) * w; // df2/dpsi
+    dRnb_dThetanb(2,0) =  ctheta * cphi * v - ctheta * sphi * w; // df3/dphi
+    dRnb_dThetanb(2,1) = -ctheta * ustate - stheta * sphi * v - stheta * cphi * w; // df3/dtheta
+    dRnb_dThetanb(2,2) = 0; // df3/dpsi
+    // build matrix dTK(thetanb)/dThetanb
+    Eigen::Matrix3d dTk_dwBNb = TK(Thetanb);
+    Eigen::Matrix3d dTK_dThetanb = Eigen::Matrix3d::Zero();
+    dTK_dThetanb(0,0) = cphi * ttheta * q - sphi * ttheta * r; // df1/dphi
+    dTK_dThetanb(0,1) = (sphi / (ctheta * ctheta)) * q + (cphi / (ctheta * ctheta)) * r; // df1/dtheta
+    dTK_dThetanb(1,0) = -sphi * q - cphi * r; // df2/dphi
+    dTK_dThetanb(2,0) = (cphi / ctheta) * q - (sphi / ctheta) * r; // df3/dphi
+    dTK_dThetanb(2,1) = sphi * ttheta * (1/ctheta) * q + cphi * ttheta * (1/ctheta) * r; // df3/dtheta
+    // TODO: Implement in Assignment(s) - implement this analytically.
+    // build jacobian from above
+    J.block<3,3>(6, 0) = dRnb_dvBNb;
+    J.block<3,3>(6, 9) = dRnb_dThetanb;
+    J.block<3,3>(9, 3) = dTk_dwBNb;
+    J.block<3,3>(9, 9) = dTK_dThetanb;
     return f;
 }
 
@@ -72,9 +113,23 @@ Eigen::VectorXd SystemSLAM::input(double t, const Eigen::VectorXd & x) const
 GaussianInfo<double> SystemSLAM::processNoiseDensity(double dt) const
 {
     // SQ is an upper triangular matrix such that SQ.'*SQ = Q is the power spectral density of the continuous time process noise
-    Eigen::MatrixXd SQ;
-    
+
     // TODO: Assignment(s)
+    const double sigma_vx = 0.02;  // m/s / sqrt(s)
+    const double sigma_vy = 0.02;  // m/s / sqrt(s)
+    const double sigma_vz = 0.02;  // m/s / sqrt(s)
+    const double sigma_p  = 0.01;  // rad/s / sqrt(s)
+    const double sigma_q  = 0.01;  // rad/s / sqrt(s)
+    const double sigma_r  = 0.01;  // rad/s / sqrt(s)
+
+    Eigen::Matrix<double, 6, 6> SQ = Eigen::Matrix<double, 6, 6>::Zero();
+    SQ(0,0) = sigma_vx;
+    SQ(1,1) = sigma_vy;
+    SQ(2,2) = sigma_vz;
+    SQ(3,3) = sigma_p;
+    SQ(4,4) = sigma_q;
+    SQ(5,5) = sigma_r;
+    
 
     // Distribution of noise increment dw ~ N(0, Q*dt) for time increment dt
     return GaussianInfo<double>::fromSqrtMoment(SQ*std::sqrt(dt));
@@ -85,6 +140,7 @@ std::vector<Eigen::Index> SystemSLAM::processNoiseIndex() const
     // Indices of process model equations where process noise is injected
     std::vector<Eigen::Index> idxQ;
     // TODO: Assignment(s)
+    idxQ = {0, 1, 2, 3, 4, 5};
     return idxQ;
 }
 

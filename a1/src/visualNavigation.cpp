@@ -73,6 +73,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         if (scenario == 1)
         {
             outputFrame = detectAndDrawArUco(imgin, 20);
+            
         }
         else if (scenario == 3)
         {

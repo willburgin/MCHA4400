@@ -2,6 +2,8 @@
 #define ROTATION_HPP
 
 #include <Eigen/Core>
+#include <autodiff/forward/dual.hpp>
+#include <autodiff/forward/dual/eigen.hpp>
 
 template <typename Scalar>
 Eigen::Matrix3<Scalar> rotx(const Scalar & x)
@@ -120,6 +122,43 @@ Eigen::Vector3<typename Derived::Scalar> rot2rpy(const Eigen::MatrixBase<Derived
     Theta(1) = atan2(-R(2,0), hypot(R(2,1), R(2,2)));
     Theta(2) = atan2(R(1,0), R(0,0));
     return Theta;
+}
+
+// implement the kinematic transformation matrix given by:
+// J(eta) = [Rnb(thetanb)    0]
+//          [0               T(thetanb)]
+template <typename Scalar>
+Eigen::Matrix<Scalar, 3, 3> TK(const Eigen::Matrix<Scalar, 3, 1> & Thetanb)
+{
+    Scalar phi = Thetanb(0);
+    Scalar theta = Thetanb(1);
+    Eigen::Matrix<Scalar, 3, 3> TK = Eigen::Matrix<Scalar, 3, 3>::Zero();
+    using std::cos, std::sin, std::tan;
+    Scalar cphi = cos(phi);
+    Scalar sphi = sin(phi);
+    Scalar ctheta = cos(theta);
+    Scalar ttheta = tan(theta);
+    TK(0, 0) = 1;
+    TK(0, 1) = sphi * ttheta;
+    TK(0, 2) = cphi * ttheta;
+    TK(1, 1) = cphi;
+    TK(1, 2) = -sphi;
+    TK(2, 1) = sphi / ctheta;
+    TK(2, 2) = cphi / ctheta;
+    return TK;
+}
+// build the kinematic transformation matrix
+template <typename Scalar>
+Eigen::Matrix<Scalar, 6, 6> eulerKinematicTransformation(const Eigen::Matrix<Scalar, 6, 1> & eta)
+{
+    Eigen::Matrix<Scalar, 3, 1> thetanb = eta.template segment<3>(3);
+    Eigen::Matrix<Scalar, 3, 3> Rnb = rpy2rot(thetanb);
+    Eigen::Matrix<Scalar, 3, 3> T = TK(thetanb);
+
+    Eigen::Matrix<Scalar, 6, 6> J = Eigen::Matrix<Scalar, 6, 6>::Zero();
+    J.template block<3,3>(0,0) = Rnb;
+    J.template block<3,3>(3,3) = T;
+    return J;
 }
 
 #endif
