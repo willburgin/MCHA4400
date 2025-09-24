@@ -1,5 +1,5 @@
-#ifndef MEASUREMENTSLAMPOSEBUNDLE_H
-#define MEASUREMENTSLAMPOSEBUNDLE_H
+#ifndef MEASUREMENTSLAMUNIQUETAGBUNDLE_H
+#define MEASUREMENTSLAMUNIQUETAGBUNDLE_H
 
 #include <Eigen/Core>
 #include "SystemBase.h"
@@ -8,10 +8,10 @@
 #include "Pose.hpp"
 #include "MeasurementSLAM.h"
 
-class MeasurementPoseBundle : public MeasurementSLAM
+class MeasurementSLAMUniqueTagBundle : public MeasurementSLAM
 {
 public:
-    MeasurementPoseBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera);
+    MeasurementSLAMUniqueTagBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera);
     MeasurementSLAM * clone() const override;
     virtual Eigen::VectorXd simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
     virtual double logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
@@ -36,48 +36,48 @@ protected:
 
 // Image feature location for a given landmark (ArUco marker with 4 corners)
 template <typename Scalar>
-Eigen::Matrix<Scalar, 8, 1> MeasurementPoseBundle::predictFeature(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system, std::size_t idxLandmark) const
+Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system, std::size_t idxLandmark) const
 {
     // Obtain camera pose from state
     Pose<Scalar> Tnc;
     Tnc.translationVector = system.cameraPosition(camera_, x); // rCNn
     Tnc.rotationMatrix = system.cameraOrientation(camera_, x); // Rnc
 
-    // Obtain landmark pose from state (6D: position + orientation)
+    // Obtain landmark pose from state (position + orientation)
     std::size_t idx = system.landmarkPositionIndex(idxLandmark);
-    Eigen::Vector3<Scalar> rPNn = x.template segment<3>(idx);     // Position
-    Eigen::Vector3<Scalar> Thetapn = x.template segment<3>(idx + 3); // Orientation
+    Eigen::Vector3<Scalar> rJNn = x.template segment<3>(idx);     // Position
+    Eigen::Vector3<Scalar> Thetanj = x.template segment<3>(idx + 3); // Orientation
 
     // Create landmark pose
-    Pose<Scalar> Tpn;
-    Tpn.translationVector = rPNn;
-    Tpn.rotationMatrix = rpy2rot(Thetapn);  // RPn rotation matrix
+    Pose<Scalar> Tnj;
+    Tnj.translationVector = rJNn;
+    Tnj.rotationMatrix = rpy2rot(Thetanj);  // Rnj rotation matrix
 
-    // ArUco marker corner positions in marker frame (assume 166mm edge length)
+    // ArUco marker corner positions in marker frame 
     Scalar l_half = Scalar(166e-3 / 2.0); // Half edge length in meters
-    std::vector<Eigen::Vector3<Scalar>> rPij_J = {
-        Eigen::Vector3<Scalar>(-l_half, -l_half, Scalar(0)), // Bottom-left
-        Eigen::Vector3<Scalar>( l_half, -l_half, Scalar(0)), // Bottom-right  
-        Eigen::Vector3<Scalar>( l_half,  l_half, Scalar(0)), // Top-right
-        Eigen::Vector3<Scalar>(-l_half,  l_half, Scalar(0))  // Top-left
+    std::vector<Eigen::Vector3<Scalar>> rJcJj = {
+        Eigen::Vector3<Scalar>(-l_half, -l_half, Scalar(0)),
+        Eigen::Vector3<Scalar>( l_half, -l_half, Scalar(0)), 
+        Eigen::Vector3<Scalar>( l_half,  l_half, Scalar(0)),
+        Eigen::Vector3<Scalar>(-l_half,  l_half, Scalar(0))  
     };
 
     // Predict pixel coordinates for all 4 corners
-    Eigen::Matrix<Scalar, 8, 1> h; // 4 corners × 2 coordinates = 8 values
+    Eigen::Matrix<Scalar, 8, 1> h; // 4 corners × 2 coordinates = 8 values (
     
-    for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4; ++j)
     {
-        // Transform corner from marker frame to world frame: rPij/N = RPn * rPij/J + rPNn
-        Eigen::Vector3<Scalar> rPij_N = Tpn.rotationMatrix * rPij_J[i] + Tpn.translationVector;
+        // Transform corner from marker frame to world frame: rJcNn = Rnj * rJcJj + rJNn
+        Eigen::Vector3<Scalar> rJcNn = Tnj.rotationMatrix * rJcJj[j] + rJNn;
         
         // Transform to camera coordinates
-        Eigen::Vector3<Scalar> rPij_C = Tnc.rotationMatrix.transpose() * (rPij_N - Tnc.translationVector);
+        Eigen::Vector3<Scalar> rJcCn = Tnc.rotationMatrix.transpose() * (rJcNn - Tnc.translationVector);
         
         // Project to pixels
-        Eigen::Vector2<Scalar> rQij = camera_.vectorToPixel(rPij_C); // position vector from image origin to corner j of landmark i
+        Eigen::Vector2<Scalar> rQOi = camera_.vectorToPixel(rJcCn); // position vector from image origin to corner j of landmark i
         
         // Store in output vector
-        h.template segment<2>(2*i) = rQij;
+        h.template segment<2>(2*j) = rQOi;
     }
     
     return h;
@@ -85,7 +85,7 @@ Eigen::Matrix<Scalar, 8, 1> MeasurementPoseBundle::predictFeature(const Eigen::V
 
 // Image feature locations for a bundle of landmarks
 template <typename Scalar>
-Eigen::VectorX<Scalar> MeasurementPoseBundle::predictFeatureBundle(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
+Eigen::VectorX<Scalar> MeasurementSLAMUniqueTagBundle::predictFeatureBundle(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
 {
     assert(x.size() == system.density.dim());
 

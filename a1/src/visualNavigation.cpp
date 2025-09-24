@@ -59,6 +59,21 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     // Visual navigation
 
     // Initialisation
+    // int numInitialLandmarks = 5;
+    // int stateDim = 12 + 6*numInitialLandmarks;
+
+    // Eigen::MatrixXd P0 = Eigen::MatrixXd::Identity(stateDim, stateDim);
+    // P0.block<3,3>(0,0) *= 1.0;
+    // P0.block<3,3>(3,3) *= 1.0;
+    // P0.block<3,3>(6,6) *= 1.0;
+    // P0.block<3,3>(9,9) *= 1.0;
+    // for (int i = 0; i < numInitialLandmarks; ++i)
+    // {
+    //     int idx = 12 + 6*i;
+    //     P0.block<3,3>(idx, idx) *= 100.0; // landmark position
+    //     P0.block<3,3>(idx+3, idx+3) *= 10.0; // landmark orientation
+    // }
+
 
     while (true)
     {
@@ -96,7 +111,8 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         }
         if (doExport)
         {
-            cv::Mat imgout; /* plot.getFrame();*/ // TODO: Uncomment this to get the frame image
+            // cv::Mat imgout; /* plot.getFrame();*/ // TODO: Uncomment this to get the frame image
+            cv::Mat imgout;
             bufferedVideoWriter.write(imgout);
         }
     }

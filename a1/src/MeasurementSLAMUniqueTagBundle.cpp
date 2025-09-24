@@ -10,10 +10,10 @@
 #include "Camera.h"
 #include "Measurement.h"
 #include "MeasurementSLAM.h"
-#include "MeasurementSLAMPoseBundle.h"
+#include "MeasurementSLAMUniqueTagBundle.h"
 #include "rotation.hpp"
 
-MeasurementPoseBundle::MeasurementPoseBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera)
+MeasurementSLAMUniqueTagBundle::MeasurementSLAMUniqueTagBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
     , Y_(Y)
     , sigma_(1.0) // TODO: Assignment(s)
@@ -24,19 +24,19 @@ MeasurementPoseBundle::MeasurementPoseBundle(double time, const Eigen::Matrix<do
     // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;
 }
 
-MeasurementSLAM * MeasurementPoseBundle::clone() const
+MeasurementSLAM * MeasurementSLAMUniqueTagBundle::clone() const
 {
-    return new MeasurementPoseBundle(*this);
+    return new MeasurementSLAMUniqueTagBundle(*this);
 }
 
-Eigen::VectorXd MeasurementPoseBundle::simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const
+Eigen::VectorXd MeasurementSLAMUniqueTagBundle::simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const
 {
     Eigen::VectorXd y(Y_.size());
     throw std::runtime_error("Not implemented");
     return y;
 }
 
-double MeasurementPoseBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const
+double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const
 {
     const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
 
@@ -45,7 +45,7 @@ double MeasurementPoseBundle::logLikelihood(const Eigen::VectorXd & x, const Sys
     std::iota(idxLandmarks.begin(), idxLandmarks.end(), 0); // FIXME: This just selects all landmarks
 
     // Get feature associations
-    const std::vector<int> & associations = const_cast<MeasurementPoseBundle*>(this)->associate(systemSLAM, idxLandmarks);
+    const std::vector<int> & associations = const_cast<MeasurementSLAMUniqueTagBundle*>(this)->associate(systemSLAM, idxLandmarks);
     
     double logLik = 0.0;
     std::size_t numUnassociated = 0;
@@ -92,7 +92,7 @@ double MeasurementPoseBundle::logLikelihood(const Eigen::VectorXd & x, const Sys
     return logLik;
 }
 
-double MeasurementPoseBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
+double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
 {
     // Evaluate gradient for Newton and quasi-Newton methods
     g.resize(x.size());
@@ -101,7 +101,7 @@ double MeasurementPoseBundle::logLikelihood(const Eigen::VectorXd & x, const Sys
     return logLikelihood(x, system);
 }
 
-double MeasurementPoseBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const
+double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const
 {
     // Evaluate Hessian for Newton method
     H.resize(x.size(), x.size());
@@ -110,7 +110,7 @@ double MeasurementPoseBundle::logLikelihood(const Eigen::VectorXd & x, const Sys
     return logLikelihood(x, system, g);
 }
 
-void MeasurementPoseBundle::update(SystemBase & system)
+void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
 {
     SystemSLAM & systemSLAM = dynamic_cast<SystemSLAM &>(system);
 
@@ -124,7 +124,7 @@ void MeasurementPoseBundle::update(SystemBase & system)
 }
 
 // Image feature location for a given landmark (ArUco marker) and Jacobian
-Eigen::Matrix<double, 8, 1> MeasurementPoseBundle::predictFeature(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, std::size_t idxLandmark) const
+Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, std::size_t idxLandmark) const
 {
     // Get camera pose from state
     Pose<double> Tnc;
@@ -133,21 +133,21 @@ Eigen::Matrix<double, 8, 1> MeasurementPoseBundle::predictFeature(const Eigen::V
 
     // Get landmark pose from state (6D: position + orientation)
     std::size_t idx = system.landmarkPositionIndex(idxLandmark);
-    Eigen::Vector3d rPNn = x.segment<3>(idx);       // Position
-    Eigen::Vector3d ThetaPn = x.segment<3>(idx + 3); // Orientation
+    Eigen::Vector3d rJNn = x.segment<3>(idx);       // Position
+    Eigen::Vector3d Thetanj = x.segment<3>(idx + 3); // Orientation
 
     // Create landmark pose
-    Pose<double> Tpn;
-    Tpn.translationVector = rPNn;
-    Tpn.rotationMatrix = rpy2rot(ThetaPn);  // RPn rotation matrix
+    Pose<double> Tnj;
+    Tnj.translationVector = rJNn;
+    Tnj.rotationMatrix = rpy2rot(Thetanj);  // Rnj rotation matrix
 
-    // ArUco marker corner positions in marker frame (assume 166mm edge length)
+    // ArUco marker corner positions in marker frame 
     double l_half = 166e-3 / 2.0; // Half edge length in meters
-    std::vector<Eigen::Vector3d> rPij_J = {
-        Eigen::Vector3d(-l_half, -l_half, 0.0), // Bottom-left
-        Eigen::Vector3d( l_half, -l_half, 0.0), // Bottom-right  
-        Eigen::Vector3d( l_half,  l_half, 0.0), // Top-right
-        Eigen::Vector3d(-l_half,  l_half, 0.0)  // Top-left
+    std::vector<Eigen::Vector3d> rJcJj = {
+        Eigen::Vector3d(-l_half, -l_half, 0.0),
+        Eigen::Vector3d( l_half, -l_half, 0.0), 
+        Eigen::Vector3d( l_half,  l_half, 0.0),
+        Eigen::Vector3d(-l_half,  l_half, 0.0)  
     };
 
     // Compute predicted pixel coordinates for all 4 corners
@@ -174,63 +174,71 @@ Eigen::Matrix<double, 8, 1> MeasurementPoseBundle::predictFeature(const Eigen::V
     
     for (int i = 0; i < 4; ++i)
     {
-        // Transform corner from marker frame to world frame: rPij/N = RPn * rPij/J + rPNn
-        Eigen::Vector3d rPij_N = Tpn.rotationMatrix * rPij_J[i] + Tpn.translationVector;
+        // Transform corner from marker frame to world frame: rJcNn = Rnj * rJcJj + rJNn
+        Eigen::Vector3d rJcNn = Tnj.rotationMatrix * rJcJj[i] + rJNn;
         
         // Transform to camera coordinates
-        Eigen::Vector3d rPij_C = Tnc.rotationMatrix.transpose() * (rPij_N - Tnc.translationVector);
+        Eigen::Vector3d rJcCn = Tnc.rotationMatrix.transpose() * (rJcNn - Tnc.translationVector);
         
         // Get pixel coordinates with Jacobian w.r.t. camera coordinates
         Eigen::Matrix23d J_camera;  
-        Eigen::Vector2d rQij = camera_.vectorToPixel(rPij_C, J_camera);
+        Eigen::Vector2d rQOi = camera_.vectorToPixel(rJcCn, J_camera);
         
         // Store in output vector
-        h.segment<2>(2*i) = rQij;
+        h.segment<2>(2*i) = rQOi;
         
         // Compute partial Jacobians for this corner
-        // TODO: Assignment 1 - Implement full Jacobian including landmark orientation derivatives
-        // For now, implement simplified version focusing on landmark position and body pose
-        
-        // // ∂h_ij/∂r^n_{P/N} (landmark position)
-        // Eigen::Matrix<double, 2, 3> dhij_drPNn = J_camera * Rnc.transpose();
-        // J.block<2, 3>(2*i, idx) = dhij_drPNn;
-        
-        // // ∂h_ij/∂r^n_{B/N} (body position) 
-        // Eigen::Matrix<double, 2, 3> dhij_drBNn = -J_camera * Rbc.transpose() * Rnb.transpose();
-        // J.block<2, 3>(2*i, 6) = dhij_drBNn;
-        
-        // // ∂h_ij/∂Theta_{nb} (body orientation)
-        // Eigen::Vector3d rPij_N_minus_rBNn = rPij_N - rBNn;
+        // ∂h_i/∂rJNn (landmark position derivatives) - using body-frame approach like point landmarks
+        Eigen::Matrix<double, 2, 3> dhi_drJNn = J_camera * Rbc.transpose() * Rnb.transpose();
+        J.block<2, 3>(2*i, idx) = dhi_drJNn; 
 
-        // // ∂R^n_b/∂φ (roll)
-        // Eigen::Matrix3d dRx_dphi;
-        // rotx(Thetanb(0), dRx_dphi);
-        // Eigen::Matrix3d dRnb_dphi = rotz(Thetanb(2)) * roty(Thetanb(1)) * dRx_dphi;
+        // ∂h_i/∂Θnj (landmark orientation derivatives) - NEW for pose landmarks
+        Eigen::Matrix3d dRxj_dphi;
+        rotx(Thetanj(0), dRxj_dphi);
+        Eigen::Matrix3d dRnj_dphi = rotz(Thetanj(2)) * roty(Thetanj(1)) * dRxj_dphi;
 
-        // // ∂R^n_b/∂θ (pitch)  
-        // Eigen::Matrix3d dRy_dtheta;
-        // roty(Thetanb(1), dRy_dtheta);
-        // Eigen::Matrix3d dRnb_dtheta = rotz(Thetanb(2)) * dRy_dtheta * rotx(Thetanb(0));
+        Eigen::Matrix3d dRyj_dtheta;
+        roty(Thetanj(1), dRyj_dtheta);
+        Eigen::Matrix3d dRnj_dtheta = rotz(Thetanj(2)) * dRyj_dtheta * rotx(Thetanj(0));
+ 
+        Eigen::Matrix3d dRzj_dpsi;
+        rotz(Thetanj(2), dRzj_dpsi);
+        Eigen::Matrix3d dRnj_dpsi = dRzj_dpsi * roty(Thetanj(1)) * rotx(Thetanj(0));
 
-        // // ∂R^n_b/∂ψ (yaw)
-        // Eigen::Matrix3d dRz_dpsi;
-        // rotz(Thetanb(2), dRz_dpsi);
-        // Eigen::Matrix3d dRnb_dpsi = dRz_dpsi * roty(Thetanb(1)) * rotx(Thetanb(0));
+        // ∂h_i/∂rBNn (body position derivatives)  
+        Eigen::Matrix<double, 2, 3> dhi_drBNn = -J_camera * Rbc.transpose() * Rnb.transpose();
+        J.block<2, 3>(2*i, 6) = dhi_drBNn;  
 
-        // // Apply chain rule for body orientation
-        // J.block<2, 1>(2*i, 9)  = J_camera * Rbc.transpose() * dRnb_dphi.transpose() * rPij_N_minus_rBNn;    
-        // J.block<2, 1>(2*i, 10) = J_camera * Rbc.transpose() * dRnb_dtheta.transpose() * rPij_N_minus_rBNn;  
-        // J.block<2, 1>(2*i, 11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rPij_N_minus_rBNn;
-        
-        // TODO: Add ∂h_ij/∂Theta_{Pn} (landmark orientation derivatives)
-        // This requires computing ∂(RPn * rPij_J)/∂ThetaPn
+        // ∂h_i/∂Θnb (body orientation derivatives)
+        Eigen::Vector3d rJcNn_minus_rBNn = rJcNn - rBNn;  
+
+        Eigen::Matrix3d dRx_dphi;
+        rotx(Thetanb(0), dRx_dphi);
+        Eigen::Matrix3d dRnb_dphi = rotz(Thetanb(2)) * roty(Thetanb(1)) * dRx_dphi;
+
+        Eigen::Matrix3d dRy_dtheta;
+        roty(Thetanb(1), dRy_dtheta);
+        Eigen::Matrix3d dRnb_dtheta = rotz(Thetanb(2)) * dRy_dtheta * rotx(Thetanb(0));
+ 
+        Eigen::Matrix3d dRz_dpsi;
+        rotz(Thetanb(2), dRz_dpsi);
+        Eigen::Matrix3d dRnb_dpsi = dRz_dpsi * roty(Thetanb(1)) * rotx(Thetanb(0));        
+
+        // Apply body orientation derivative
+        J.block<2, 1>(2*i, 9)  = J_camera * Rbc.transpose() * dRnb_dphi.transpose() * rJcNn_minus_rBNn;    
+        J.block<2, 1>(2*i, 10) = J_camera * Rbc.transpose() * dRnb_dtheta.transpose() * rJcNn_minus_rBNn;  
+        J.block<2, 1>(2*i, 11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rJcNn_minus_rBNn;   
+
+        Eigen::Vector3d rJcJj_i = rJcJj[i]; // corner position in marker frame
+        J.block<2, 1>(2*i, idx+3) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dphi * rJcJj_i;     
+        J.block<2, 1>(2*i, idx+4) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dtheta * rJcJj_i;     
+        J.block<2, 1>(2*i, idx+5) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dpsi * rJcJj_i;     
     }
-
     return h;
 }
 
 // Density of image feature location for a given landmark
-GaussianInfo<double> MeasurementPoseBundle::predictFeatureDensity(const SystemSLAM & system, std::size_t idxLandmark) const
+GaussianInfo<double> MeasurementSLAMUniqueTagBundle::predictFeatureDensity(const SystemSLAM & system, std::size_t idxLandmark) const
 {
     const std::size_t & nx = system.density.dim();
     const std::size_t ny = 8; // 4 corners × 2 coordinates
@@ -258,7 +266,7 @@ GaussianInfo<double> MeasurementPoseBundle::predictFeatureDensity(const SystemSL
 }
 
 // Image feature locations for a bundle of landmarks
-Eigen::VectorXd MeasurementPoseBundle::predictFeatureBundle(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
+Eigen::VectorXd MeasurementSLAMUniqueTagBundle::predictFeatureBundle(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
 {
     const std::size_t & nL = idxLandmarks.size();
     const std::size_t & nx = system.density.dim();
@@ -283,7 +291,7 @@ Eigen::VectorXd MeasurementPoseBundle::predictFeatureBundle(const Eigen::VectorX
 }
 
 // Density of image features for a set of landmarks
-GaussianInfo<double> MeasurementPoseBundle::predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
+GaussianInfo<double> MeasurementSLAMUniqueTagBundle::predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const
 {
     const std::size_t & nx = system.density.dim();
     const std::size_t ny = 8*idxLandmarks.size(); // 8 coordinates per landmark
@@ -311,7 +319,7 @@ GaussianInfo<double> MeasurementPoseBundle::predictFeatureBundleDensity(const Sy
 }
 
 #include "association_util.h"
-const std::vector<int> & MeasurementPoseBundle::associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks)
+const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks)
 {
     GaussianInfo<double> featureBundleDensity = predictFeatureBundleDensity(system, idxLandmarks);
     snn(system, featureBundleDensity, idxLandmarks, Y_, camera_, idxFeatures_);

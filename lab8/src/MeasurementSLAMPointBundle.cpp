@@ -115,32 +115,32 @@ Eigen::Vector2d MeasurementPointBundle::predictFeature(const Eigen::VectorXd & x
     Eigen::Matrix3d Rnb = Tnb.rotationMatrix;
     Eigen::Matrix3d Rbc = Tbc.rotationMatrix;
 
-    // Equation (27a): ∂h_j/∂r^n_{j/N} 
+    // Equation (27a)
     Eigen::Matrix<double, 2, 3> dhj_drPNn = J_camera * Rbc.transpose() * Rnb.transpose();
     J.block<2, 3>(0, idx) = dhj_drPNn;
 
-    // Equation (27b): ∂h_j/∂r^n_{B/N}
+    // Equation (27b)
     Eigen::Matrix<double, 2, 3> dhj_drBNn = -J_camera * Rbc.transpose() * Rnb.transpose();
     J.block<2, 3>(0, 6) = dhj_drBNn;
 
     Eigen::Vector3d rPNn_minus_rBNn = rPNn - rBNn;
 
-    // ∂R^n_b/∂φ (roll) - Fixed: These should be 3×3 matrices
+    // Roll
     Eigen::Matrix3d dRx_dphi;
     rotx(Thetanb(0), dRx_dphi);
     Eigen::Matrix3d dRnb_dphi = rotz(Thetanb(2)) * roty(Thetanb(1)) * dRx_dphi;
 
-    // ∂R^n_b/∂θ (pitch)  
+    // Pitch  
     Eigen::Matrix3d dRy_dtheta;
     roty(Thetanb(1), dRy_dtheta);
     Eigen::Matrix3d dRnb_dtheta = rotz(Thetanb(2)) * dRy_dtheta * rotx(Thetanb(0));
 
-    // ∂R^n_b/∂ψ (yaw)
+    // Yaw
     Eigen::Matrix3d dRz_dpsi;
     rotz(Thetanb(2), dRz_dpsi);
     Eigen::Matrix3d dRnb_dpsi = dRz_dpsi * roty(Thetanb(1)) * rotx(Thetanb(0));
 
-    // // // Apply equation (27c) for each Euler angle
+    // Apply equation (27c) for each Euler angle
     J.col(9)  = J_camera * Rbc.transpose() * dRnb_dphi.transpose() * rPNn_minus_rBNn;    
     J.col(10) = J_camera * Rbc.transpose() * dRnb_dtheta.transpose() * rPNn_minus_rBNn;  
     J.col(11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rPNn_minus_rBNn;   
