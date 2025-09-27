@@ -32,6 +32,8 @@ protected:
     Eigen::Matrix<double, 2, Eigen::Dynamic> Y_;    // Feature bundle
     double sigma_;                                  // Feature error standard deviation (in pixels)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
+    std::vector<int> frameMarkerIDs_;               // Marker IDs for each frame
+    std::vector<int> knownMarkerIDs_;        // Known marker IDs
 };
 
 // Image feature location for a given landmark (ArUco marker with 4 corners)

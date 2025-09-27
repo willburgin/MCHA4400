@@ -23,6 +23,7 @@ SCENARIO("Camera::vectorToPixel analytical Jacobian vs autodiff")
             0.0, 800.0, 240.0,
             0.0, 0.0, 1.0);
         cam.distCoeffs = cv::Mat::zeros(12, 1, CV_64F); // no distortion
+        cam.flags = cv::CALIB_RATIONAL_MODEL | cv::CALIB_THIN_PRISM_MODEL;
 
         Eigen::Vector3d rPCc(0.2, -0.1, 1.2);
 
