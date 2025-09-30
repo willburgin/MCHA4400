@@ -26,6 +26,14 @@ public:
     SystemSLAM * clone() const override;
     virtual std::size_t numberLandmarks() const override;
     virtual std::size_t landmarkPositionIndex(std::size_t idxLandmark) const override;
+
+    // Marker ID management
+    void addKnownMarkerID(int markerID);
+    bool isMarkerKnown(int markerID) const;
+    const std::vector<int>& getKnownMarkerIDs() const { return knownMarkerIDs_; }
+
+private:
+    std::vector<int> knownMarkerIDs_;
 };
 
 #endif

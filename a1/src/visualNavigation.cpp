@@ -7,6 +7,9 @@
 #include "visualNavigation.h"
 #include "imagefeatures.h"
 #include "Camera.h"
+#include "SystemSLAMPoseLandmarks.h"
+#include "MeasurementSLAMUniqueTagBundle.h"
+#include "Plot.h"
 
 void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const std::filesystem::path & cameraPath, int scenario, int interactive, const std::filesystem::path & outputDirectory)
 {
@@ -58,9 +61,15 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         bufferedVideoWriter.start(videoOut);
     }
 
-    // Visual navigation
+    // SLAM System Initialization for Scenario 1
+    std::unique_ptr<SystemSLAMPoseLandmarks> system;
+    std::unique_ptr<MeasurementSLAMUniqueTagBundle> measurement;
+    bool systemInitialized = false;
+    
+    double time = 0.0;
 
-    // Initialisation
+    // Track frame number for interactive mode
+    static int frameCount = 0;
 
 
     while (true)
@@ -72,35 +81,96 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             break;
         }
         double dt = 1/fps;
+        time += dt;
+        
         cv::Mat outputFrame;
         if (scenario == 1)
         {
-            outputFrame = detectAndDrawArUco(imgin, 20);
+            auto result = detectAndDrawArUco(imgin, 20);
+            outputFrame = result.image;
             
+            if (!systemInitialized)
+            {
+                // Initialize system with NO landmarks initially - let it grow dynamically
+                int stateDim = 12; // Only body states initially
+                
+                Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(stateDim);
+                
+                Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
+                initialCov.diagonal().head(6) *= 0.001;    // Small velocity uncertainty
+                initialCov.diagonal().segment(6, 6) *= 0.001;     // Small pose uncertainty
+                
+                auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
+                system = std::make_unique<SystemSLAMPoseLandmarks>(initialDensity);
+                systemInitialized = true;
+            }
+            
+            // SLAM ESTIMATION LOOP - let the system grow dynamically
+            
+            // 1. Predict state forward in time
+            std::cout << "Before predict - system dim: " << system->density.dim() << std::endl;
+            system->predict(time);
+            std::cout << "After predict - system dim: " << system->density.dim() << std::endl;
+
+            
+            // 2. Create measurement with ALL detected ArUco data (even new markers)
+            if (!result.markerIds.empty())
+            {
+                int numMarkers = result.markerIds.size();
+                Eigen::Matrix<double, 8, Eigen::Dynamic> Y(8, numMarkers);  // 8 coordinates per marker (4 corners × 2 coordinates)
+                
+                for (int i = 0; i < numMarkers; ++i)
+                {
+                    for (int j = 0; j < 4; ++j)
+                    {
+                        Y(2*j, i) = result.markerCorners[i][j].x;     // x coordinate of corner j
+                        Y(2*j + 1, i) = result.markerCorners[i][j].y; // y coordinate of corner j
+                    }
+                }
+                std::cout << "Y: " << Y << std::endl;
+                measurement = std::make_unique<MeasurementSLAMUniqueTagBundle>(time, Y, camera);
+                // Set the detected marker IDs
+                measurement->setFrameMarkerIDs(result.markerIds);                
+                // 3. Process measurement - this handles data association and landmark initialization
+                std::cout << "Before measurement update - system dim: " << system->density.dim() << std::endl;
+                measurement->process(*system);
+                std::cout << "After measurement update - system dim: " << system->density.dim() << std::endl;
+
+            }
+            
+            // 4. Update visualization
+            system->view() = outputFrame.clone();
+            if (measurement) {
+                plot.setData(*system, *measurement);
+                plot.render();
+            }
         }
         else if (scenario == 3)
         {
             outputFrame = detectAndDrawShiAndTomasi(imgin, 20);
         }
+
+        // // Display image
+        // cv::imshow("Video Feature Detection", outputFrame);
+        // int delay = static_cast<int>(1000.0 / fps);
+        // if (cv::waitKey(delay) == 27) 
+        // {
+        //     break;
+        // }
         
-        // Process frame
-
-        // Update state
-
-        // Update plot
-
-        // Write output frame 
-        // TODO: Display image returned from detectAndDraw on screen and wait for 1000/fps milliseconds
-        cv::imshow("Video Feature Detection", outputFrame);
-        int delay = static_cast<int>(1000.0 / fps);
-        if (cv::waitKey(delay) == 27) 
+        frameCount++;
+        // Handle interactive mode
+        bool isLastFrame = (frameCount == nFrames);
+        if (interactive == 2 || (interactive == 1 && isLastFrame))
         {
-            break;
+            // Start handling plot GUI events (blocking)
+            plot.start();
         }
-        if (doExport)
+
+        if (doExport && systemInitialized)
         {
-            // cv::Mat imgout; /* plot.getFrame();*/ // TODO: Uncomment this to get the frame image
-            cv::Mat imgout;
+            // Get frame from plot for export
+            cv::Mat imgout = plot.getFrame();
             bufferedVideoWriter.write(imgout);
         }
     }

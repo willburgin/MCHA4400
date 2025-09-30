@@ -43,9 +43,15 @@ SCENARIO("MeasurementSLAMUniqueTagBundle::predictFeature analytical Jacobian vs 
         SystemSLAMPoseLandmarks system(density);
         
         // Create measurement (8 measurements: 4 corners × 2 coordinates each)
-        Eigen::Matrix<double, 2, Eigen::Dynamic> Y_dummy(2, 4);
-        Y_dummy << 400.0, 500.0, 600.0, 700.0,  // u coordinates for 4 corners
-                   300.0, 400.0, 500.0, 600.0;  // v coordinates for 4 corners
+        Eigen::Matrix<double, 8, Eigen::Dynamic> Y_dummy(8, 1);  // 8 rows, 1 col
+        Y_dummy << 400.0,  // u coordinate for corner 1
+                   300.0,  // v coordinate for corner 1
+                   500.0,  // u coordinate for corner 2
+                   400.0,  // v coordinate for corner 2
+                   400.0,  // u coordinate for corner 3
+                   300.0,  // v coordinate for corner 3
+                   500.0,  // u coordinate for corner 4
+                   400.0;  // v coordinate for corner 4
         MeasurementSLAMUniqueTagBundle measurement(0.0, Y_dummy, cam);
         
         std::size_t idxLandmark = 0;  // Test first (and only) landmark

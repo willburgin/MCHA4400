@@ -25,3 +25,16 @@ std::size_t SystemSLAMPoseLandmarks::landmarkPositionIndex(std::size_t idxLandma
     assert(idxLandmark < numberLandmarks());
     return 12 + 6*idxLandmark;    
 }
+
+void SystemSLAMPoseLandmarks::addKnownMarkerID(int markerID)
+{
+    if (std::find(knownMarkerIDs_.begin(), knownMarkerIDs_.end(), markerID) == knownMarkerIDs_.end())
+    {
+        knownMarkerIDs_.push_back(markerID);
+    }
+}
+
+bool SystemSLAMPoseLandmarks::isMarkerKnown(int markerID) const
+{
+    return std::find(knownMarkerIDs_.begin(), knownMarkerIDs_.end(), markerID) != knownMarkerIDs_.end();
+}

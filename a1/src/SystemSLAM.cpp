@@ -114,7 +114,7 @@ GaussianInfo<double> SystemSLAM::processNoiseDensity(double dt) const
 {
     // SQ is an upper triangular matrix such that SQ.'*SQ = Q is the power spectral density of the continuous time process noise
 
-    // TODO: Assignment(s)
+    // TODO: Assignment(s) Tuning parameters
     const double sigma_vx = 0.02;  // m/s / sqrt(s)
     const double sigma_vy = 0.02;  // m/s / sqrt(s)
     const double sigma_vz = 0.02;  // m/s / sqrt(s)

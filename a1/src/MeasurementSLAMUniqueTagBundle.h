@@ -11,7 +11,7 @@
 class MeasurementSLAMUniqueTagBundle : public MeasurementSLAM
 {
 public:
-    MeasurementSLAMUniqueTagBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera);
+    MeasurementSLAMUniqueTagBundle(double time, const Eigen::Matrix<double, 8, Eigen::Dynamic> & Y, const Camera & camera);
     MeasurementSLAM * clone() const override;
     virtual Eigen::VectorXd simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
     virtual double logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
@@ -27,13 +27,19 @@ public:
     virtual GaussianInfo<double> predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const override;
 
     virtual const std::vector<int> & associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) override;
+    void setFrameMarkerIDs(const std::vector<int>& markerIDs) { frameMarkerIDs_ = markerIDs; }
+    const std::vector<int>& getAssociations() const { return idxFeatures_; }
+    const std::vector<bool>& getVisibility() const { return visibleLandmarks_; }
 protected:
     virtual void update(SystemBase & system) override;
-    Eigen::Matrix<double, 2, Eigen::Dynamic> Y_;    // Feature bundle
+    Eigen::Matrix<double, 8, Eigen::Dynamic> Y_;    // Feature bundle
     double sigma_;                                  // Feature error standard deviation (in pixels)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
     std::vector<int> frameMarkerIDs_;               // Marker IDs for each frame
-    std::vector<int> knownMarkerIDs_;        // Known marker IDs
+    std::vector<bool> visibleLandmarks_;            // Visibility status for each landmark
+private:
+    template <typename Scalar>
+    Scalar logLikelihoodTemplated(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system) const;
 };
 
 // Image feature location for a given landmark (ArUco marker with 4 corners)
@@ -56,12 +62,12 @@ Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
     Tnj.rotationMatrix = rpy2rot(Thetanj);  // Rnj rotation matrix
 
     // ArUco marker corner positions in marker frame 
-    Scalar l_half = Scalar(166e-3 / 2.0); // Half edge length in meters
+    Scalar l_half = Scalar(0.166 / 2.0); // Half edge length in meters
     std::vector<Eigen::Vector3<Scalar>> rJcJj = {
-        Eigen::Vector3<Scalar>(-l_half, -l_half, Scalar(0)),
-        Eigen::Vector3<Scalar>( l_half, -l_half, Scalar(0)), 
-        Eigen::Vector3<Scalar>( l_half,  l_half, Scalar(0)),
-        Eigen::Vector3<Scalar>(-l_half,  l_half, Scalar(0))  
+        Eigen::Vector3<Scalar>(-l_half, l_half, Scalar(0)),
+        Eigen::Vector3<Scalar>( l_half, l_half, Scalar(0)), 
+        Eigen::Vector3<Scalar>( l_half,  -l_half, Scalar(0)),
+        Eigen::Vector3<Scalar>(-l_half,  -l_half, Scalar(0))  
     };
 
     // Predict pixel coordinates for all 4 corners

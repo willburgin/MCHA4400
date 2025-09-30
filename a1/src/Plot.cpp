@@ -84,6 +84,7 @@
 #include "SystemSLAM.h"
 #include "MeasurementSLAM.h"
 #include "Plot.h"
+#include "MeasurementSLAMUniqueTagBundle.h"
 
 // Forward declarations
 static void hsv2rgb(const double & h, const double & s, const double & v, double & r, double & g, double & b);
@@ -579,18 +580,38 @@ void Plot::render()
         qpLandmarks.pop_back();
     }    
 
+    // Get association and visibility information from measurement
+    const auto* measurementBundle = dynamic_cast<const MeasurementSLAMUniqueTagBundle*>(pMeasurement.get());
+    const std::vector<int>& associations = measurementBundle ? measurementBundle->getAssociations() : std::vector<int>();
+    const std::vector<bool>& visibility = measurementBundle ? measurementBundle->getVisibility() : std::vector<bool>();
+
     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)
     {
-        // Add components to render
-        hsv2rgb(300*(i)/(pSystem->numberLandmarks()), 1., 1., r, g, b);
+        bool isVisible = (i < visibility.size()) ? visibility[i] : false;
+        bool isAssociated = (i < associations.size() && associations[i] >= 0);
+        
+        // Determine color based on visibility and association status
+        if (isVisible && isAssociated) {
+            // Blue for successfully tracked landmarks
+            hsv2rgb(240, 1., 1., r, g, b);
+        } else if (isVisible && !isAssociated) {
+            // Red for visible but not detected landmarks
+            hsv2rgb(0, 1., 1., r, g, b);
+        } else {
+            // Yellow for not visible landmarks
+            hsv2rgb(60, 1., 1., r, g, b);
+        }
+        
         Eigen::Vector3d rgb;
         rgb(0) = r*255;
         rgb(1) = g*255;
         rgb(2) = b*255;
 
+        // Plot confidence ellipse in image (2D view)
         GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
         plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
 
+        // Update 3D confidence ellipsoid
         QuadricPlot & qp = qpLandmarks[i];
         qp.update(pSystem->landmarkPositionDensity(i));
         qp.getActor()->GetProperty()->SetOpacity(0.5);
@@ -678,37 +699,78 @@ void openCV2VTK(const cv::Mat & viewCVRGB, vtkImageData* viewVTK)
 
 void plotGaussianConfidenceEllipse(cv::Mat & img, const GaussianInfo<double> & prQOi, const Eigen::Vector3d & color)
 {
-    assert(prQOi.dim() == 2);
-
     int markerSize              = 24;
     int markerThickness         = 2;
-
-    Eigen::MatrixXd rQOi_ellipse = prQOi.confidenceEllipse(3, 100);
-
     cv::Scalar bgr(color(2), color(1), color(0));
-
-    Eigen::VectorXd murQOi = prQOi.mean();
-    cv::drawMarker(img, cv::Point(murQOi(0), murQOi(1)), bgr,   cv::MARKER_CROSS,   markerSize, markerThickness);
-    Eigen::VectorXd rQOi_seg1, rQOi_seg2;
-
-    for (int i = 0; i < rQOi_ellipse.cols()-1; ++i)
+    
+    if (prQOi.dim() == 2)
     {
-        rQOi_seg1   = rQOi_ellipse.col(i);
-        rQOi_seg2   = rQOi_ellipse.col(i+1);
-
-        bool isInWidth1  = 0 <= rQOi_seg1(0) && rQOi_seg1(0) <= img.cols-1;
-        bool isInHeight1 = 0 <= rQOi_seg1(1) && rQOi_seg1(1) <= img.rows-1;
+        // Original 2D point feature case
+        Eigen::MatrixXd rQOi_ellipse = prQOi.confidenceEllipse(3, 100);
         
-        bool isInWidth2  = 0 <= rQOi_seg2(0) && rQOi_seg2(0) <= img.cols-1;
-        bool isInHeight2 = 0 <= rQOi_seg2(1) && rQOi_seg2(1) <= img.rows-1;
-        bool plotLine   = isInWidth1 && isInHeight1 && isInWidth2 && isInHeight2;
-        if (plotLine)
+        Eigen::VectorXd murQOi = prQOi.mean();
+        cv::drawMarker(img, cv::Point(murQOi(0), murQOi(1)), bgr, cv::MARKER_CROSS, markerSize, markerThickness);
+        
+        for (int i = 0; i < rQOi_ellipse.cols()-1; ++i)
         {
-            cv::line(img, 
-                cv::Point(rQOi_seg1(0), rQOi_seg1(1)),
-                cv::Point(rQOi_seg2(0), rQOi_seg2(1)),
-                bgr,
-                2);
+            Eigen::VectorXd rQOi_seg1 = rQOi_ellipse.col(i);
+            Eigen::VectorXd rQOi_seg2 = rQOi_ellipse.col(i+1);
+
+            bool isInWidth1  = 0 <= rQOi_seg1(0) && rQOi_seg1(0) <= img.cols-1;
+            bool isInHeight1 = 0 <= rQOi_seg1(1) && rQOi_seg1(1) <= img.rows-1;
+            
+            bool isInWidth2  = 0 <= rQOi_seg2(0) && rQOi_seg2(0) <= img.cols-1;
+            bool isInHeight2 = 0 <= rQOi_seg2(1) && rQOi_seg2(1) <= img.rows-1;
+            bool plotLine   = isInWidth1 && isInHeight1 && isInWidth2 && isInHeight2;
+            if (plotLine)
+            {
+                cv::line(img, 
+                    cv::Point(rQOi_seg1(0), rQOi_seg1(1)),
+                    cv::Point(rQOi_seg2(0), rQOi_seg2(1)),
+                    bgr,
+                    2);
+            }
+        }
+    }
+    else if (prQOi.dim() == 8)
+    {
+        // Step 1: Define the linear transformation from 8D corners to 2D center
+        // center = [u_center, v_center] = (1/4) * sum of 4 corners
+        Eigen::MatrixXd H(2, 8);
+        H << 0.25, 0, 0.25, 0, 0.25, 0, 0.25, 0,    // u_center = avg of u coords
+             0, 0.25, 0, 0.25, 0, 0.25, 0, 0.25;    // v_center = avg of v coords
+        
+        auto centerFunc = [&](const Eigen::VectorXd& corners, Eigen::MatrixXd& J) -> Eigen::Vector2d {
+            J = H;
+            return H * corners;
+        };
+        
+        // Step 2: Extract 2D center uncertainty from 8D distribution
+        GaussianInfo<double> centerDensity = prQOi.affineTransform(centerFunc);
+        
+        // Step 3: Draw the 2D confidence ellipse
+        Eigen::MatrixXd rQOi_ellipse = centerDensity.confidenceEllipse(3, 100);
+        Eigen::VectorXd murQOi = centerDensity.mean();
+        
+        cv::drawMarker(img, cv::Point(murQOi(0), murQOi(1)), bgr, cv::MARKER_CROSS, markerSize, markerThickness);
+        
+        for (int i = 0; i < rQOi_ellipse.cols()-1; ++i)
+        {
+            Eigen::VectorXd rQOi_seg1 = rQOi_ellipse.col(i);
+            Eigen::VectorXd rQOi_seg2 = rQOi_ellipse.col(i+1);
+    
+            bool isInWidth1  = 0 <= rQOi_seg1(0) && rQOi_seg1(0) <= img.cols-1;
+            bool isInHeight1 = 0 <= rQOi_seg1(1) && rQOi_seg1(1) <= img.rows-1;
+            bool isInWidth2  = 0 <= rQOi_seg2(0) && rQOi_seg2(0) <= img.cols-1;
+            bool isInHeight2 = 0 <= rQOi_seg2(1) && rQOi_seg2(1) <= img.rows-1;
+            
+            if (isInWidth1 && isInHeight1 && isInWidth2 && isInHeight2)
+            {
+                cv::line(img, 
+                    cv::Point(rQOi_seg1(0), rQOi_seg1(1)),
+                    cv::Point(rQOi_seg2(0), rQOi_seg2(1)),
+                    bgr, 2);
+            }
         }
     }
 }

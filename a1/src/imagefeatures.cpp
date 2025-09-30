@@ -282,7 +282,7 @@ cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
     return imgout;
 }
 
-cv::Mat detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
+ArucoDetectionResult detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
 {
     cv::Mat imgout = img.clone();
 
@@ -301,7 +301,7 @@ cv::Mat detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
     detector.detectMarkers(gray, markerCorners, markerIds, rejectedCandidates);
     std::println("Image width: {}", img.cols);
     std::println("Image height: {}", img.rows);
-    std::println("Marker Corners: {}",   markerIds.size());
+    std::println("Markers {}",   markerCorners.size());
     std::println("{:<5} {:<10} {:<10}", "ID", "X", "Y");
 
     // Combine markerIds and markerCorners together and sort by ID
@@ -339,5 +339,6 @@ cv::Mat detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
                     2);
     }
 
-    return imgout;
+    // Return the result with image, IDs, and corners
+    return {imgout, markerIds, markerCorners};
 }
