@@ -544,7 +544,7 @@ Plot::Plot(const Camera & camera)
     // rFNn
     threeDimRenderer->GetActiveCamera()->SetFocalPoint(0,0,0);
     // rCNn
-    double sc = 2;
+    double sc = 10;
     threeDimRenderer->GetActiveCamera()->SetPosition(-0.75*sc,-0.75*sc,-0.5*sc);
     threeDimRenderer->GetActiveCamera()->SetViewUp(0,0,-1);
 
@@ -608,9 +608,46 @@ void Plot::render()
         rgb(2) = b*255;
 
         // Plot confidence ellipse in image (2D view)
-        if (isVisible)
-        {
+        if (isVisible) {
             GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
+            
+            // Draw predicted marker corners
+            Eigen::VectorXd x = pSystem->density.mean();
+            std::size_t idx = pSystem->landmarkPositionIndex(i);
+            Eigen::Vector3d rJNn = x.segment<3>(idx);
+            Eigen::Vector3d Thetanj = x.segment<3>(idx + 3);
+            Eigen::Matrix3d Rnj = rpy2rot(Thetanj);
+            
+            Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
+            Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
+            Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
+            
+            double l_half = 0.166 / 2.0;
+            std::vector<Eigen::Vector3d> rJcJj = {
+                Eigen::Vector3d(-l_half,  l_half, 0.0),
+                Eigen::Vector3d( l_half,  l_half, 0.0),
+                Eigen::Vector3d( l_half, -l_half, 0.0),
+                Eigen::Vector3d(-l_half, -l_half, 0.0)
+            };
+            
+            std::vector<cv::Point> corners;
+            for (int c = 0; c < 4; ++c) {
+                Eigen::Vector3d rJcNn = Rnj * rJcJj[c] + rJNn;
+                Eigen::Vector3d rJcCc = Rnc.transpose() * (rJcNn - rCNn);
+                if (rJcCc(2) > 0) {
+                    Eigen::Vector2d pixel = camera.vectorToPixel(rJcCc);
+                    corners.push_back(cv::Point(pixel(0), pixel(1)));
+                }
+            }
+            
+            if (corners.size() == 4) {
+                cv::Scalar green(0, 255, 0);  // Green color in BGR format
+                for (int c = 0; c < 4; ++c) {
+                    cv::line(pSystem->view(), corners[c], corners[(c+1)%4], green, 2);
+                }
+            }
+            
+            // Now draw the ellipse
             plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
         }
 
@@ -708,7 +745,7 @@ void plotGaussianConfidenceEllipse(cv::Mat & img, const GaussianInfo<double> & p
     
     if (prQOi.dim() == 2)
     {
-        // Original 2D point feature case
+        // original 2D point feature case
         Eigen::MatrixXd rQOi_ellipse = prQOi.confidenceEllipse(3, 100);
         
         Eigen::VectorXd murQOi = prQOi.mean();
@@ -732,46 +769,6 @@ void plotGaussianConfidenceEllipse(cv::Mat & img, const GaussianInfo<double> & p
                     cv::Point(rQOi_seg2(0), rQOi_seg2(1)),
                     bgr,
                     2);
-            }
-        }
-    }
-    else if (prQOi.dim() == 8)
-    {
-        // define the linear transformation from 8D corners to 2D center
-        Eigen::MatrixXd H(2, 8);
-        H << 0.25, 0, 0.25, 0, 0.25, 0, 0.25, 0,    // u_center = avg of u coords
-             0, 0.25, 0, 0.25, 0, 0.25, 0, 0.25;    // v_center = avg of v coords
-        
-        auto centerFunc = [&](const Eigen::VectorXd& corners, Eigen::MatrixXd& J) -> Eigen::Vector2d {
-            J = H;
-            return H * corners;
-        };
-        
-        // extract 2D center uncertainty from 8D distribution
-        GaussianInfo<double> centerDensity = prQOi.affineTransform(centerFunc);
-        
-        // draw the 2D confidence ellipse
-        Eigen::MatrixXd rQOi_ellipse = centerDensity.confidenceEllipse(3, 100);
-        Eigen::VectorXd murQOi = centerDensity.mean();
-        
-        cv::drawMarker(img, cv::Point(murQOi(0), murQOi(1)), bgr, cv::MARKER_CROSS, markerSize, markerThickness);
-        
-        for (int i = 0; i < rQOi_ellipse.cols()-1; ++i)
-        {
-            Eigen::VectorXd rQOi_seg1 = rQOi_ellipse.col(i);
-            Eigen::VectorXd rQOi_seg2 = rQOi_ellipse.col(i+1);
-    
-            bool isInWidth1  = 0 <= rQOi_seg1(0) && rQOi_seg1(0) <= img.cols-1;
-            bool isInHeight1 = 0 <= rQOi_seg1(1) && rQOi_seg1(1) <= img.rows-1;
-            bool isInWidth2  = 0 <= rQOi_seg2(0) && rQOi_seg2(0) <= img.cols-1;
-            bool isInHeight2 = 0 <= rQOi_seg2(1) && rQOi_seg2(1) <= img.rows-1;
-            
-            if (isInWidth1 && isInHeight1 && isInWidth2 && isInHeight2)
-            {
-                cv::line(img, 
-                    cv::Point(rQOi_seg1(0), rQOi_seg1(1)),
-                    cv::Point(rQOi_seg2(0), rQOi_seg2(1)),
-                    bgr, 2);
             }
         }
     }

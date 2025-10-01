@@ -33,6 +33,14 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     assert(fs.isOpened());
     fs["camera"] >> camera;
 
+    Eigen::Matrix3d Rbc;
+    Rbc << 0, 0, 1,   // b1 = c3
+            1, 0, 0,   // b2 = c1
+            0, 1, 0;   // b3 = c2
+
+    camera.Tbc.rotationMatrix = Rbc;
+    camera.Tbc.translationVector = Eigen::Vector3d::Zero();
+
     // Display loaded calibration data
     camera.printCalibration();
 
@@ -149,14 +157,6 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         {
             outputFrame = detectAndDrawShiAndTomasi(imgin, 20);
         }
-
-        // // Display image
-        // cv::imshow("Video Feature Detection", outputFrame);
-        // int delay = static_cast<int>(1000.0 / fps);
-        // if (cv::waitKey(delay) == 27) 
-        // {
-        //     break;
-        // }
         
         frameCount++;
         // Handle interactive mode
