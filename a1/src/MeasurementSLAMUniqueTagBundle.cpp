@@ -162,28 +162,43 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
         
         if (!systemSLAM.isMarkerKnown(detectedMarkerID))
         {
-            // add new marker to known markers
             systemSLAM.addKnownMarkerID(detectedMarkerID);
             
-            // initialize new landmark
+            // Get camera pose
             auto camPos = systemSLAM.cameraPositionDensity(camera_).mean();
             auto camRpy = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
             Eigen::Matrix3d Rnc = rpy2rot(camRpy);
             
-            Eigen::Vector2d center(0, 0);
+            // Define marker corners in marker frame (same as in your associate function)
+            double l_half = 0.166 / 2.0;
+            std::vector<cv::Point3f> markerCorners3D = {
+                cv::Point3f(-l_half,  l_half, 0.0f),
+                cv::Point3f( l_half,  l_half, 0.0f),
+                cv::Point3f( l_half, -l_half, 0.0f),
+                cv::Point3f(-l_half, -l_half, 0.0f)
+            };
+            
+            // Get detected corners for this marker
+            std::vector<cv::Point2f> imageCorners;
             for (int c = 0; c < 4; ++c) {
-                center(0) += Y_(2*c, detectionIdx);
-                center(1) += Y_(2*c + 1, detectionIdx);
+                imageCorners.push_back(cv::Point2f(Y_(2*c, detectionIdx), Y_(2*c+1, detectionIdx)));
             }
-            center /= 4.0;
+            Eigen::Vector3d rBNn = systemSLAM.density.mean().segment<3>(6);
+            Eigen::Vector3d Thetanb = systemSLAM.density.mean().segment<3>(9);
+            Pose<double> Tnb(rpy2rot(Thetanb), rBNn); // body pose
             
-            cv::Vec2d centerCV(center[0], center[1]);
-            cv::Vec3d rayCamera = camera_.pixelToVector(centerCV);
-            Eigen::Vector3d rayDir(rayCamera[0], rayCamera[1], rayCamera[2]);
+            // solve PnP to get marker pose relative to camera
+            cv::Mat rvec, tvec;
+            cv::solvePnP(markerCorners3D, imageCorners, camera_.cameraMatrix, 
+                        camera_.distCoeffs, rvec, tvec);
             
-            double d = 2.0;
-            Eigen::Vector3d posInit = camPos + Rnc * (d * rayDir);
-            Eigen::Vector3d oriInit = camRpy;
+            // convert to pose
+            Pose<double> Tcj(rvec, tvec);  // marker relative to camera
+            Pose<double> Tnj = Tnb * camera_.Tbc * Tcj;  // marker in world frame
+            
+            // extract position and orientation
+            Eigen::Vector3d posInit = Tnj.translationVector;
+            Eigen::Vector3d oriInit = rot2rpy(Tnj.rotationMatrix);
             
             Eigen::VectorXd mu_new(6);
             mu_new << posInit, oriInit;
@@ -196,8 +211,6 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
                 GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
             
             systemSLAM.density *= newLandmarkDensity;
-            // log the existing state
-            std::cout << "Existing state: " << systemSLAM.density.mean().transpose() << std::endl;
         }
     }
     
@@ -323,28 +336,51 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
 GaussianInfo<double> MeasurementSLAMUniqueTagBundle::predictFeatureDensity(const SystemSLAM & system, std::size_t idxLandmark) const
 {
     const std::size_t & nx = system.density.dim();
-    const std::size_t ny = 8; // 4 corners × 2 coordinates
-
-    //   y   =   h(x) + v  
-    // \___/   \__________/
-    //   ya  =   ha(x, v)
-    //
-    // Helper function to evaluate ha(x, v) and its Jacobian Ja = [dha/dx, dha/dv]
-    const auto func = [&](const Eigen::VectorXd & xv, Eigen::MatrixXd & Ja)
+    
+    // get the 3D position marginal from the state 
+    std::size_t idx = system.landmarkPositionIndex(idxLandmark);
+    auto idxPos = Eigen::seqN(idx, 3);
+    GaussianInfo<double> p3D = system.density.marginal(idxPos);
+    
+    // helper to compute the 2D pixel center and its Jacobian
+    const auto projectCenter = [&](const Eigen::VectorXd & rJNn, Eigen::MatrixXd & J) -> Eigen::Vector2d
     {
-        assert(xv.size() == nx + ny);
-        Eigen::VectorXd x = xv.head(nx);
-        Eigen::VectorXd v = xv.tail(ny);
-        Eigen::MatrixXd J;
-        Eigen::VectorXd ya = predictFeature(x, J, system, idxLandmark) + v;
-        Ja.resize(ny, nx + ny);
-        Ja << J, Eigen::MatrixXd::Identity(ny, ny);
-        return ya;
+        // get camera pose from state mean
+        Eigen::VectorXd x = system.density.mean();
+        Eigen::Vector3d rCNn = system.cameraPosition(camera_, x);
+        Eigen::Matrix3d Rnc = system.cameraOrientation(camera_, x);
+        
+        // transform landmark center to camera frame
+        Eigen::Vector3d rJcCc = Rnc.transpose() * (rJNn - rCNn);
+        
+        // project to pixels with Jacobian
+        Eigen::Matrix23d J_camera;
+        Eigen::Vector2d pixel = camera_.vectorToPixel(rJcCc, J_camera);
+        
+        // chain rule
+        J = J_camera * Rnc.transpose();
+        
+        return pixel;
     };
     
-    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_*Eigen::MatrixXd::Identity(ny, ny));
-    auto pxv = system.density*pv;   // p(x, v) = p(x)*p(v)
-    return pxv.affineTransform(func);
+    // add measurement noise
+    const std::size_t ny = 2;
+    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_ * Eigen::MatrixXd::Identity(ny, ny));
+    auto p3Dv = p3D * pv;
+    
+    // project through camera
+    return p3Dv.affineTransform([&](const Eigen::VectorXd & rJNnv, Eigen::MatrixXd & Ja) -> Eigen::Vector2d {
+        Eigen::Vector3d rJNn = rJNnv.head(3);
+        Eigen::Vector2d v = rJNnv.tail(2);
+        
+        Eigen::MatrixXd J;
+        Eigen::Vector2d pixel = projectCenter(rJNn, J);
+        
+        Ja.resize(2, 5);
+        Ja << J, Eigen::Matrix2d::Identity();
+        
+        return pixel + v;
+    });
 }
 
 // Image feature locations for a bundle of landmarks
