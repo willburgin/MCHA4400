@@ -608,8 +608,11 @@ void Plot::render()
         rgb(2) = b*255;
 
         // Plot confidence ellipse in image (2D view)
-        GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
-        plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
+        if (isVisible)
+        {
+            GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
+            plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
+        }
 
         // Update 3D confidence ellipsoid
         QuadricPlot & qp = qpLandmarks[i];
@@ -734,8 +737,7 @@ void plotGaussianConfidenceEllipse(cv::Mat & img, const GaussianInfo<double> & p
     }
     else if (prQOi.dim() == 8)
     {
-        // Step 1: Define the linear transformation from 8D corners to 2D center
-        // center = [u_center, v_center] = (1/4) * sum of 4 corners
+        // define the linear transformation from 8D corners to 2D center
         Eigen::MatrixXd H(2, 8);
         H << 0.25, 0, 0.25, 0, 0.25, 0, 0.25, 0,    // u_center = avg of u coords
              0, 0.25, 0, 0.25, 0, 0.25, 0, 0.25;    // v_center = avg of v coords
@@ -745,10 +747,10 @@ void plotGaussianConfidenceEllipse(cv::Mat & img, const GaussianInfo<double> & p
             return H * corners;
         };
         
-        // Step 2: Extract 2D center uncertainty from 8D distribution
+        // extract 2D center uncertainty from 8D distribution
         GaussianInfo<double> centerDensity = prQOi.affineTransform(centerFunc);
         
-        // Step 3: Draw the 2D confidence ellipse
+        // draw the 2D confidence ellipse
         Eigen::MatrixXd rQOi_ellipse = centerDensity.confidenceEllipse(3, 100);
         Eigen::VectorXd murQOi = centerDensity.mean();
         

@@ -57,12 +57,17 @@ Scalar MeasurementSLAMUniqueTagBundle::logLikelihoodTemplated(const Eigen::Vecto
     for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
         if (idxFeatures_[j] >= 0) {  // This landmark is associated
             int detectionIdx = idxFeatures_[j];
+            // std::cout << "Using landmark " << j << " with detection " << detectionIdx 
+            // << " (marker ID " << frameMarkerIDs_[detectionIdx] << ")" << std::endl;
             
             // Predict all 4 corners for this landmark
             Eigen::Matrix<Scalar, 8, 1> h_pred = predictFeature(x, systemSLAM, j);
             
             // Sum over all 4 corners
             for (int c = 0; c < 4; ++c) {
+                // std::cout << "  Corner " << c << ": (" 
+                // << Y_(2*c, detectionIdx) << ", " 
+                // << Y_(2*c+1, detectionIdx) << ")" << std::endl;
                 // Get measured corner position (always double)
                 Eigen::Vector2d y_ic = Y_.block<2, 1>(2*c, detectionIdx);
                 
@@ -141,9 +146,8 @@ double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, 
 void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
 {
     SystemSLAMPoseLandmarks & systemSLAM = dynamic_cast<SystemSLAMPoseLandmarks &>(system);
-    const std::size_t numDetectedMarkers = frameMarkerIDs_.size();
     
-    // STEP 1: Associate existing landmarks
+    // associate detected features with existing landmarks
     std::vector<std::size_t> idxLandmarks;
     for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) 
     {
@@ -151,46 +155,40 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
     }
     idxFeatures_ = associate(systemSLAM, idxLandmarks);
     
-    // STEP 2: Initialize new landmarks
-    for (std::size_t detectionIdx = 0; detectionIdx < numDetectedMarkers; ++detectionIdx)
+    // loop over all detected markers
+    for (std::size_t detectionIdx = 0; detectionIdx < frameMarkerIDs_.size(); ++detectionIdx)
     {
-        const int currentMarkerID = frameMarkerIDs_[detectionIdx];
+        int detectedMarkerID = frameMarkerIDs_[detectionIdx];
         
-        if (!systemSLAM.isMarkerKnown(currentMarkerID))
+        if (!systemSLAM.isMarkerKnown(detectedMarkerID))
         {
-            systemSLAM.addKnownMarkerID(currentMarkerID);
+            // add new marker to known markers
+            systemSLAM.addKnownMarkerID(detectedMarkerID);
             
-            // Get camera pose
+            // initialize new landmark
             auto camPos = systemSLAM.cameraPositionDensity(camera_).mean();
             auto camRpy = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
             Eigen::Matrix3d Rnc = rpy2rot(camRpy);
-
-            // Compute center of detected marker
+            
             Eigen::Vector2d center(0, 0);
             for (int c = 0; c < 4; ++c) {
                 center(0) += Y_(2*c, detectionIdx);
                 center(1) += Y_(2*c + 1, detectionIdx);
             }
             center /= 4.0;
-
-            // Back-project along ray at arbitrary depth
+            
             cv::Vec2d centerCV(center[0], center[1]);
             cv::Vec3d rayCamera = camera_.pixelToVector(centerCV);
             Eigen::Vector3d rayDir(rayCamera[0], rayCamera[1], rayCamera[2]);
             
-            // Choose arbitrary depth within FOV (this sets scale for monocular SLAM)
-            double d = 0.8;  // meters
+            double d = 2.0;
             Eigen::Vector3d posInit = camPos + Rnc * (d * rayDir);
-            
-            // Initialize orientation parallel to camera
             Eigen::Vector3d oriInit = camRpy;
             
-            // Landmark prior mean
             Eigen::VectorXd mu_new(6);
             mu_new << posInit, oriInit;
             
-            // Weak prior covariance (PDF page 19)
-            double epsilon = 0.0001;  // Small value to make Hessian non-singular
+            double epsilon = 0.0001;
             Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(6, 6);
             Eigen::VectorXd nu_new = Xi_new * mu_new;
             
@@ -198,12 +196,12 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
                 GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
             
             systemSLAM.density *= newLandmarkDensity;
-            
-            std::cout << "Initialized landmark ID " << currentMarkerID << std::endl;
+            // log the existing state
+            std::cout << "Existing state: " << systemSLAM.density.mean().transpose() << std::endl;
         }
     }
     
-    // STEP 3: Measurement update
+    // measurement update with associated detections
     Measurement::update(system);
 }
 
@@ -215,18 +213,18 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
     Tnc.translationVector = system.cameraPosition(camera_, x); // rCNn
     Tnc.rotationMatrix = system.cameraOrientation(camera_, x); // Rnc
 
-    // Get landmark pose from state (6D: position + orientation)
+    // get landmark pose from state 
     std::size_t idx = system.landmarkPositionIndex(idxLandmark);
-    Eigen::Vector3d rJNn = x.segment<3>(idx);       // Position
-    Eigen::Vector3d Thetanj = x.segment<3>(idx + 3); // Orientation
+    Eigen::Vector3d rJNn = x.segment<3>(idx);       // position
+    Eigen::Vector3d Thetanj = x.segment<3>(idx + 3); // orientation
 
-    // Create landmark pose
+    // create landmark pose
     Pose<double> Tnj;
     Tnj.translationVector = rJNn;
-    Tnj.rotationMatrix = rpy2rot(Thetanj);  // Rnj rotation matrix
+    Tnj.rotationMatrix = rpy2rot(Thetanj);  // rotation matrix
 
-    // ArUco marker corner positions in marker frame 
-    double l_half = 0.166 / 2.0; // Half edge length in meters
+    // aruco marker corner positions in marker frame 
+    double l_half = 0.166 / 2.0; // half edge length in meters
     std::vector<Eigen::Vector3d> rJcJj = {
         Eigen::Vector3d(-l_half, l_half, 0.0),
         Eigen::Vector3d( l_half, l_half, 0.0), 
@@ -234,43 +232,43 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
         Eigen::Vector3d(-l_half,  -l_half, 0.0)  
     };
 
-    // Compute predicted pixel coordinates for all 4 corners
+    // compute predicted pixel coordinates for all 4 corners
     Eigen::Matrix<double, 8, 1> h; // 4 corners × 2 coordinates = 8 values
     
-    // Initialize Jacobian ∂h/∂x 
+    // initialize Jacobian 
     J.resize(8, x.size()); // 8 measurement outputs × state size
     J.setZero();
 
-    // Extract body state components
+    // extract body state components
     Eigen::Vector3d rBNn = x.segment<3>(6);
     Eigen::Vector3d Thetanb = x.segment<3>(9);
 
-    // Get body pose
+    // get body pose
     Pose<double> Tnb;
     Tnb.rotationMatrix = rpy2rot(Thetanb);
     Tnb.translationVector = rBNn;
 
-    // Get camera-to-body transformation
+    // get camera-to-body transformation
     Pose<double> Tbc = camera_.Tbc;
     Eigen::Matrix3d Rnb = Tnb.rotationMatrix;
     Eigen::Matrix3d Rbc = Tbc.rotationMatrix;
     
     for (int i = 0; i < 4; ++i)
     {
-        // Transform corner from marker frame to world frame: rJcNn = Rnj * rJcJj + rJNn
+        // transform corner from marker frame to world frame: rJcNn = Rnj * rJcJj + rJNn
         Eigen::Vector3d rJcNn = Tnj.rotationMatrix * rJcJj[i] + rJNn;
         
-        // Transform to camera coordinates
+        // transform to camera coordinates
         Eigen::Vector3d rJcCn = Tnc.rotationMatrix.transpose() * (rJcNn - Tnc.translationVector);
         
-        // Get pixel coordinates with Jacobian w.r.t. camera coordinates
+        // get pixel coordinates with Jacobian w.r.t. camera coordinates
         Eigen::Matrix23d J_camera;  
         Eigen::Vector2d rQOi = camera_.vectorToPixel(rJcCn, J_camera);
         
-        // Store in output vector
+        // store in output vector
         h.segment<2>(2*i) = rQOi;
         
-        // Compute partial Jacobians for this corner
+        // compute partial Jacobians for this corner
         // (landmark position derivatives) 
         Eigen::Matrix<double, 2, 3> dhi_drJNn = J_camera * Rbc.transpose() * Rnb.transpose();
         J.block<2, 3>(2*i, idx) = dhi_drJNn; 
@@ -307,11 +305,12 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
         rotz(Thetanb(2), dRz_dpsi);
         Eigen::Matrix3d dRnb_dpsi = dRz_dpsi * roty(Thetanb(1)) * rotx(Thetanb(0));        
 
-        // Apply body orientation derivative
+        // apply body orientation derivative
         J.block<2, 1>(2*i, 9)  = J_camera * Rbc.transpose() * dRnb_dphi.transpose() * rJcNn_minus_rBNn;    
         J.block<2, 1>(2*i, 10) = J_camera * Rbc.transpose() * dRnb_dtheta.transpose() * rJcNn_minus_rBNn;  
         J.block<2, 1>(2*i, 11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rJcNn_minus_rBNn;   
 
+        // (landmark orientation derivatives)
         Eigen::Vector3d rJcJj_i = rJcJj[i]; // corner position in marker frame
         J.block<2, 1>(2*i, idx+3) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dphi * rJcJj_i;     
         J.block<2, 1>(2*i, idx+4) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dtheta * rJcJj_i;     
@@ -404,23 +403,15 @@ GaussianInfo<double> MeasurementSLAMUniqueTagBundle::predictFeatureBundleDensity
 const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks)
 {
     const SystemSLAMPoseLandmarks & systemSLAM = dynamic_cast<const SystemSLAMPoseLandmarks &>(system);
-    const std::size_t numDetectedMarkers = frameMarkerIDs_.size();
+    const std::vector<int>& knownMarkerIDs = systemSLAM.getKnownMarkerIDs();
     
-    // Get current camera pose
+    // Get current state for visibility checking
     Eigen::VectorXd x = systemSLAM.density.mean();
     Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
     Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
-    
     Pose<double> Tnc;
     Tnc.translationVector = rCNn;
     Tnc.rotationMatrix = rpy2rot(Thetanc);
-    Pose<double> Tnb = camera_.cameraToBody(Tnc);
-    
-    // Initialize association and visibility
-    idxFeatures_.assign(systemSLAM.getKnownMarkerIDs().size(), -1);
-    visibleLandmarks_.assign(systemSLAM.getKnownMarkerIDs().size(), false);
-    
-    const std::vector<int>& knownMarkerIDs = systemSLAM.getKnownMarkerIDs();
     
     // ArUco marker corners in marker frame
     double l_half = 0.166 / 2.0;
@@ -431,7 +422,13 @@ const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemS
         Eigen::Vector3d(-l_half, -l_half, 0.0)
     };
     
-    // Check visibility and perform association
+    // Initialize
+    idxFeatures_.clear();
+    idxFeatures_.resize(knownMarkerIDs.size(), -1);
+    visibleLandmarks_.clear();
+    visibleLandmarks_.resize(knownMarkerIDs.size(), false);
+    
+    // check visibility for ALL known landmarks
     for (std::size_t landmarkIdx = 0; landmarkIdx < knownMarkerIDs.size(); ++landmarkIdx)
     {
         std::size_t stateIdx = systemSLAM.landmarkPositionIndex(landmarkIdx);
@@ -439,51 +436,200 @@ const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemS
         Eigen::Vector3d Thetanj = x.segment<3>(stateIdx + 3);
         Eigen::Matrix3d Rnj = rpy2rot(Thetanj);
         
-        // Check if ALL 4 corners are within FOV
+        // check if ALL 4 corners project within image bounds
         bool allCornersVisible = true;
         for (int c = 0; c < 4; ++c)
         {
-            // Transform corner to world frame
             Eigen::Vector3d rJcNn = Rnj * rJcJj[c] + rJNn;
-            
-            // Transform to camera frame
             Eigen::Vector3d rJcCc = Tnc.rotationMatrix.transpose() * (rJcNn - rCNn);
             
-            // Check if corner is in front of camera
-            if (rJcCc(2) <= 0.0)
-            {
+            // behind camera
+            if (rJcCc(2) <= 0.0) {
                 allCornersVisible = false;
                 break;
             }
             
-            // Project to image
+            // project to image
             Eigen::Vector2d pixel = camera_.vectorToPixel(rJcCc);
             
-            // Check if pixel is within image bounds
+            // outside image bounds
             if (pixel(0) < 0 || pixel(0) >= camera_.imageSize.width ||
-                pixel(1) < 0 || pixel(1) >= camera_.imageSize.height)
-            {
+                pixel(1) < 0 || pixel(1) >= camera_.imageSize.height) {
                 allCornersVisible = false;
                 break;
             }
         }
         
-        if (allCornersVisible)
+        visibleLandmarks_[landmarkIdx] = allCornersVisible;
+    }
+    
+    // associate detected markers with visible landmarks
+    for (std::size_t detectionIdx = 0; detectionIdx < frameMarkerIDs_.size(); ++detectionIdx)
+    {
+        int detectedMarkerID = frameMarkerIDs_[detectionIdx];
+        auto findLandmark = std::find(knownMarkerIDs.begin(), knownMarkerIDs.end(), detectedMarkerID);
+        
+        if (findLandmark != knownMarkerIDs.end())
         {
-            visibleLandmarks_[landmarkIdx] = true;
-            
-            // Perform association for this visible landmark
-            int markerID = knownMarkerIDs[landmarkIdx];
-            auto it = std::find(frameMarkerIDs_.begin(), frameMarkerIDs_.end(), markerID);
-            
-            if (it != frameMarkerIDs_.end())
-            {
-                std::size_t detectionIdx = std::distance(frameMarkerIDs_.begin(), it);
-                idxFeatures_[landmarkIdx] = static_cast<int>(detectionIdx);
-            }
+            std::size_t landmarkIdx = std::distance(knownMarkerIDs.begin(), findLandmark);
+            idxFeatures_[landmarkIdx] = static_cast<int>(detectionIdx);
         }
     }
     
     return idxFeatures_;
 }
+// const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks)
+// {
+//     const SystemSLAMPoseLandmarks & systemSLAM = dynamic_cast<const SystemSLAMPoseLandmarks &>(system);
+//     const std::size_t numDetectedMarkers = frameMarkerIDs_.size();
+    
+//     // FIXME: I should be looping over detected markers, not known markers
+//     // Get current camera pose
+//     Eigen::VectorXd x = systemSLAM.density.mean();
+//     Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
+//     Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
+    
+//     Pose<double> Tnc;
+//     Tnc.translationVector = rCNn;
+//     Tnc.rotationMatrix = rpy2rot(Thetanc);
+//     Pose<double> Tnb = camera_.cameraToBody(Tnc);
+    
+//     // Initialize association and visibility
+//     idxFeatures_.assign(systemSLAM.getKnownMarkerIDs().size(), -1);
+//     visibleLandmarks_.assign(systemSLAM.getKnownMarkerIDs().size(), false);
+    
+//     const std::vector<int>& knownMarkerIDs = systemSLAM.getKnownMarkerIDs();
+    
+//     // ArUco marker corners in marker frame
+//     double l_half = 0.166 / 2.0;
+//     std::vector<Eigen::Vector3d> rJcJj = {
+//         Eigen::Vector3d(-l_half,  l_half, 0.0),
+//         Eigen::Vector3d( l_half,  l_half, 0.0),
+//         Eigen::Vector3d( l_half, -l_half, 0.0),
+//         Eigen::Vector3d(-l_half, -l_half, 0.0)
+//     };
+    
+//     // Check visibility and perform association
+//     for (std::size_t landmarkIdx = 0; landmarkIdx < knownMarkerIDs.size(); ++landmarkIdx)
+//     {
+//         std::size_t stateIdx = systemSLAM.landmarkPositionIndex(landmarkIdx);
+//         Eigen::Vector3d rJNn = x.segment<3>(stateIdx);
+//         Eigen::Vector3d Thetanj = x.segment<3>(stateIdx + 3);
+//         Eigen::Matrix3d Rnj = rpy2rot(Thetanj);
+        
+//         // Check if ALL 4 corners are within FOV
+//         bool allCornersVisible = true;
+//         for (int c = 0; c < 4; ++c)
+//         {
+//             // Transform corner to world frame
+//             Eigen::Vector3d rJcNn = Rnj * rJcJj[c] + rJNn;
+            
+//             // Transform to camera frame
+//             Eigen::Vector3d rJcCc = Tnc.rotationMatrix.transpose() * (rJcNn - rCNn);
+            
+//             // Check if corner is in front of camera
+//             if (rJcCc(2) <= 0.0)
+//             {
+//                 allCornersVisible = false;
+//                 break;
+//             }
+            
+//             // Project to image
+//             Eigen::Vector2d pixel = camera_.vectorToPixel(rJcCc);
+            
+//             // Check if pixel is within image bounds
+//             if (pixel(0) < 0 || pixel(0) >= camera_.imageSize.width ||
+//                 pixel(1) < 0 || pixel(1) >= camera_.imageSize.height)
+//             {
+//                 allCornersVisible = false;
+//                 break;
+//             }
+//         }
+        
+//         if (allCornersVisible)
+//         {
+//             visibleLandmarks_[landmarkIdx] = true;
+            
+//             // Perform association for this visible landmark
+//             int markerID = knownMarkerIDs[landmarkIdx];
+//             auto it = std::find(frameMarkerIDs_.begin(), frameMarkerIDs_.end(), markerID);
+            
+//             if (it != frameMarkerIDs_.end())
+//             {
+//                 std::size_t detectionIdx = std::distance(frameMarkerIDs_.begin(), it);
+//                 idxFeatures_[landmarkIdx] = static_cast<int>(detectionIdx);
+//             }
+//         }
+//     }
+    
+//     return idxFeatures_;
+// }
 
+// void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
+// {
+//     SystemSLAMPoseLandmarks & systemSLAM = dynamic_cast<SystemSLAMPoseLandmarks &>(system);
+//     const std::size_t numDetectedMarkers = frameMarkerIDs_.size();
+    
+//     // STEP 1: Associate existing landmarks
+//     std::vector<std::size_t> idxLandmarks;
+//     for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) 
+//     {
+//         idxLandmarks.push_back(i);
+//     }
+//     idxFeatures_ = associate(systemSLAM, idxLandmarks);
+    
+//     // STEP 2: Initialize new landmarks
+//     for (std::size_t detectionIdx = 0; detectionIdx < numDetectedMarkers; ++detectionIdx)
+//     {
+//         const int currentMarkerID = frameMarkerIDs_[detectionIdx];
+        
+//         if (!systemSLAM.isMarkerKnown(currentMarkerID))
+//         {
+//             systemSLAM.addKnownMarkerID(currentMarkerID);
+            
+//             // Get camera pose
+//             auto camPos = systemSLAM.cameraPositionDensity(camera_).mean();
+//             auto camRpy = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
+//             Eigen::Matrix3d Rnc = rpy2rot(camRpy);
+
+//             // Compute center of detected marker
+//             Eigen::Vector2d center(0, 0);
+//             for (int c = 0; c < 4; ++c) {
+//                 center(0) += Y_(2*c, detectionIdx);
+//                 center(1) += Y_(2*c + 1, detectionIdx);
+//             }
+//             center /= 4.0;
+
+//             // Back-project along ray at arbitrary depth
+//             cv::Vec2d centerCV(center[0], center[1]);
+//             cv::Vec3d rayCamera = camera_.pixelToVector(centerCV);
+//             Eigen::Vector3d rayDir(rayCamera[0], rayCamera[1], rayCamera[2]);
+            
+//             // Choose arbitrary depth within FOV (this sets scale for monocular SLAM)
+//             double d = 0.8;  // meters
+//             Eigen::Vector3d posInit = camPos + Rnc * (d * rayDir);
+            
+//             // Initialize orientation parallel to camera
+//             Eigen::Vector3d oriInit = camRpy;
+            
+//             // Landmark prior mean
+//             Eigen::VectorXd mu_new(6);
+//             mu_new << posInit, oriInit;
+            
+//             // Weak prior covariance (PDF page 19)
+//             double epsilon = 0.0001;  // Small value to make Hessian non-singular
+//             Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(6, 6);
+//             Eigen::VectorXd nu_new = Xi_new * mu_new;
+            
+//             GaussianInfo<double> newLandmarkDensity = 
+//                 GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
+            
+//             systemSLAM.density *= newLandmarkDensity;
+            
+//             std::cout << "Initialized landmark ID " << currentMarkerID << std::endl;
+//         }
+//     }
+    
+//     // STEP 3: Measurement update
+//     Measurement::update(system);
+// }
