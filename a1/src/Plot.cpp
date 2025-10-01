@@ -592,71 +592,79 @@ void Plot::render()
         
         // Determine color based on visibility and association status
         if (isVisible && isAssociated) {
-            // Blue for successfully tracked landmarks
-            hsv2rgb(240, 1., 1., r, g, b);
+            hsv2rgb(240, 1., 1., r, g, b); // Blue - detected
         } else if (isVisible && !isAssociated) {
-            // Red for visible but not detected landmarks
-            hsv2rgb(0, 1., 1., r, g, b);
+            hsv2rgb(0, 1., 1., r, g, b); // Red - visible but not detected
         } else {
-            // Yellow for not visible landmarks
-            hsv2rgb(60, 1., 1., r, g, b);
+            hsv2rgb(60, 1., 1., r, g, b); // Yellow - not visible
         }
-        
+
         Eigen::Vector3d rgb;
         rgb(0) = r*255;
         rgb(1) = g*255;
         rgb(2) = b*255;
 
-        // Plot confidence ellipse in image (2D view)
-        if (isVisible) {
-            GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
-            
-            // Draw predicted marker corners
-            Eigen::VectorXd x = pSystem->density.mean();
-            std::size_t idx = pSystem->landmarkPositionIndex(i);
-            Eigen::Vector3d rJNn = x.segment<3>(idx);
-            Eigen::Vector3d Thetanj = x.segment<3>(idx + 3);
-            Eigen::Matrix3d Rnj = rpy2rot(Thetanj);
-            
-            Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
-            Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
-            Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
-            
-            double l_half = 0.166 / 2.0;
-            std::vector<Eigen::Vector3d> rJcJj = {
-                Eigen::Vector3d(-l_half,  l_half, 0.0),
-                Eigen::Vector3d( l_half,  l_half, 0.0),
-                Eigen::Vector3d( l_half, -l_half, 0.0),
-                Eigen::Vector3d(-l_half, -l_half, 0.0)
-            };
-            
-            std::vector<cv::Point> corners;
-            for (int c = 0; c < 4; ++c) {
-                Eigen::Vector3d rJcNn = Rnj * rJcJj[c] + rJNn;
-                Eigen::Vector3d rJcCc = Rnc.transpose() * (rJcNn - rCNn);
-                if (rJcCc(2) > 0) {
-                    Eigen::Vector2d pixel = camera.vectorToPixel(rJcCc);
-                    corners.push_back(cv::Point(pixel(0), pixel(1)));
-                }
-            }
-            
-            if (corners.size() == 4) {
-                cv::Scalar green(0, 255, 0);  // Green color in BGR format
-                for (int c = 0; c < 4; ++c) {
-                    cv::line(pSystem->view(), corners[c], corners[(c+1)%4], green, 2);
-                }
-            }
-            
-            // Now draw the ellipse
+        // Check if we should plot in 2D
+        GaussianInfo prQOi = pMeasurement->predictFeatureDensity(*pSystem, i);
+        Eigen::VectorXd center = prQOi.mean();
+
+        Eigen::VectorXd x = pSystem->density.mean();
+        std::size_t idx = pSystem->landmarkPositionIndex(i);
+        Eigen::Vector3d rJNn = x.segment<3>(idx);
+
+        Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
+        Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
+        Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
+
+        // Transform landmark to camera frame and check depth
+        Eigen::Vector3d rJcCc = Rnc.transpose() * (rJNn - rCNn);
+        bool inFrontOfCamera = (rJcCc(2) > 0.0);
+
+        bool centerInBounds = (center(0) >= 0 && center(0) < camera.imageSize.width &&
+                            center(1) >= 0 && center(1) < camera.imageSize.height);
+
+        // Only plot if in front of camera AND center in bounds
+        if (inFrontOfCamera && centerInBounds) {
             plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
+            
+            // Only draw border if associated (detected)
+            if (isAssociated) {
+                Eigen::Vector3d Thetanj = x.segment<3>(idx + 3);
+                Eigen::Matrix3d Rnj = rpy2rot(Thetanj);
+                
+                double l_half = 0.166 / 2.0;
+                std::vector<Eigen::Vector3d> rJcJj = {
+                    Eigen::Vector3d(-l_half,  l_half, 0.0),
+                    Eigen::Vector3d( l_half,  l_half, 0.0),
+                    Eigen::Vector3d( l_half, -l_half, 0.0),
+                    Eigen::Vector3d(-l_half, -l_half, 0.0)
+                };
+                
+                std::vector<cv::Point> corners;
+                for (int c = 0; c < 4; ++c) {
+                    Eigen::Vector3d rJcNn_corner = Rnj * rJcJj[c] + rJNn;
+                    Eigen::Vector3d rJcCc_corner = Rnc.transpose() * (rJcNn_corner - rCNn);
+                    if (rJcCc_corner(2) > 0) {
+                        Eigen::Vector2d pixel = camera.vectorToPixel(rJcCc_corner);
+                        corners.push_back(cv::Point(pixel(0), pixel(1)));
+                    }
+                }
+                
+                if (corners.size() == 4) {
+                    cv::Scalar green(0, 255, 0);
+                    for (int c = 0; c < 4; ++c) {
+                        cv::line(pSystem->view(), corners[c], corners[(c+1)%4], green, 2);
+                    }
+                }
+            }
         }
 
-        // Update 3D confidence ellipsoid
+        // Always update 3D ellipsoid
         QuadricPlot & qp = qpLandmarks[i];
         qp.update(pSystem->landmarkPositionDensity(i));
         qp.getActor()->GetProperty()->SetOpacity(0.5);
         qp.getActor()->GetProperty()->SetColor(r, g, b);
-        qp.bounds.setExtremity(globalBounds); 
+        qp.bounds.setExtremity(globalBounds);
     }
 
     ap.update(globalBounds);

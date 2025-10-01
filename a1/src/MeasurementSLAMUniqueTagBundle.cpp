@@ -449,57 +449,35 @@ const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemS
     Tnc.translationVector = rCNn;
     Tnc.rotationMatrix = rpy2rot(Thetanc);
     
-    // ArUco marker corners in marker frame
-    double l_half = 0.166 / 2.0;
-    std::vector<Eigen::Vector3d> rJcJj = {
-        Eigen::Vector3d(-l_half,  l_half, 0.0),
-        Eigen::Vector3d( l_half,  l_half, 0.0),
-        Eigen::Vector3d( l_half, -l_half, 0.0),
-        Eigen::Vector3d(-l_half, -l_half, 0.0)
-    };
-    
     // Initialize
     idxFeatures_.clear();
     idxFeatures_.resize(knownMarkerIDs.size(), -1);
     visibleLandmarks_.clear();
     visibleLandmarks_.resize(knownMarkerIDs.size(), false);
     
-    // check visibility for ALL known landmarks
+    // Check visibility for ALL known landmarks (based on CENTER position)
     for (std::size_t landmarkIdx = 0; landmarkIdx < knownMarkerIDs.size(); ++landmarkIdx)
     {
         std::size_t stateIdx = systemSLAM.landmarkPositionIndex(landmarkIdx);
-        Eigen::Vector3d rJNn = x.segment<3>(stateIdx);
-        Eigen::Vector3d Thetanj = x.segment<3>(stateIdx + 3);
-        Eigen::Matrix3d Rnj = rpy2rot(Thetanj);
+        Eigen::Vector3d rJNn = x.segment<3>(stateIdx);  // Marker center position
         
-        // check if ALL 4 corners project within image bounds
-        bool allCornersVisible = true;
-        for (int c = 0; c < 4; ++c)
-        {
-            Eigen::Vector3d rJcNn = Rnj * rJcJj[c] + rJNn;
-            Eigen::Vector3d rJcCc = Tnc.rotationMatrix.transpose() * (rJcNn - rCNn);
-            
-            // behind camera
-            if (rJcCc(2) <= 0.0) {
-                allCornersVisible = false;
-                break;
-            }
-            
-            // project to image
+        // Transform center to camera frame
+        Eigen::Vector3d rJcCc = Tnc.rotationMatrix.transpose() * (rJNn - rCNn);
+        
+        // Check if center is in front of camera
+        if (rJcCc(2) > 0.0) {
+            // Project center to image
             Eigen::Vector2d pixel = camera_.vectorToPixel(rJcCc);
             
-            // outside image bounds
-            if (pixel(0) < 0 || pixel(0) >= camera_.imageSize.width ||
-                pixel(1) < 0 || pixel(1) >= camera_.imageSize.height) {
-                allCornersVisible = false;
-                break;
+            // Check if center is within image bounds
+            if (pixel(0) >= 0 && pixel(0) < camera_.imageSize.width &&
+                pixel(1) >= 0 && pixel(1) < camera_.imageSize.height) {
+                visibleLandmarks_[landmarkIdx] = true;
             }
         }
-        
-        visibleLandmarks_[landmarkIdx] = allCornersVisible;
     }
     
-    // associate detected markers with visible landmarks
+    // Associate detected markers with visible landmarks
     for (std::size_t detectionIdx = 0; detectionIdx < frameMarkerIDs_.size(); ++detectionIdx)
     {
         int detectedMarkerID = frameMarkerIDs_[detectionIdx];
