@@ -19,7 +19,7 @@
 MeasurementSLAMUniqueTagBundle::MeasurementSLAMUniqueTagBundle(double time, const Eigen::Matrix<double, 8, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
     , Y_(Y)
-    , sigma_(2.0) // TODO: Assignment(s)
+    , sigma_(3.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;

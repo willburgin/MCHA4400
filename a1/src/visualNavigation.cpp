@@ -58,17 +58,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     
     cv::VideoWriter videoOut;
     BufferedVideoWriter bufferedVideoWriter(3);
-    if (doExport)
-    {
-        cv::Size frameSize;
-        frameSize.width     = 2*cap.get(cv::CAP_PROP_FRAME_WIDTH);
-        frameSize.height    = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-        double outputFps    = fps;
-        int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v'); // manually specify output video codec
-        videoOut.open(outputPath.string(), codec, outputFps, frameSize);
-        bufferedVideoWriter.start(videoOut);
-    }
-
+    bool videoWriterOpened = false;
     // SLAM System Initialization for Scenario 1
     std::unique_ptr<SystemSLAMPoseLandmarks> system;
     std::unique_ptr<MeasurementSLAMUniqueTagBundle> measurement;
@@ -167,17 +157,39 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             plot.start();
         }
 
-        if (doExport && systemInitialized)
+        if (doExport && systemInitialized && measurement)
         {
-            // Get frame from plot for export
             cv::Mat imgout = plot.getFrame();
-            bufferedVideoWriter.write(imgout);
+            
+            // Open video writer on first frame (like Lab 3)
+            if (!videoWriterOpened)
+            {
+                int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+                videoOut.open(outputPath.string(), codec, fps, imgout.size());
+                
+                if (!videoOut.isOpened()) {
+                    std::cerr << "Failed to open video writer!" << std::endl;
+                    doExport = false;
+                } else {
+                    bufferedVideoWriter.start(videoOut);
+                    videoWriterOpened = true;
+                    std::cout << "Video writer opened: " << imgout.size() << " @ " << fps << " fps" << std::endl;
+                }
+            }
+            
+            if (videoWriterOpened) {
+                bufferedVideoWriter.write(imgout);
+            }
         }
     }
 
+    // After the main while loop, ensure cleanup happens
     if (doExport)
     {
-         bufferedVideoWriter.stop();
+        std::cout << "Finalizing video export..." << std::endl;
+        bufferedVideoWriter.stop();
+        videoOut.release();  // Explicitly release the video writer
+        std::cout << "Video export complete: " << outputPath << std::endl;
     }
     bufferedVideoReader.stop();
 }
