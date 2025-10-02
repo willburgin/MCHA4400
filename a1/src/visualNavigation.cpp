@@ -95,8 +95,13 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(stateDim);
                 
                 Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
-                initialCov.diagonal().head(6) *= 0.001;    // Small velocity uncertainty
-                initialCov.diagonal().segment(6, 6) *= 0.001;     // Small pose uncertainty
+
+                // best solution so far:
+                // initialCov.diagonal().head(6) *= 0.001;
+                // initialCov.diagonal().segment(6, 6) *= 0.001;
+
+                initialCov.diagonal().head(6) *= 0.06;
+                initialCov.diagonal().segment(6, 6) *= 0.0003;
                 
                 auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
                 system = std::make_unique<SystemSLAMPoseLandmarks>(initialDensity);
