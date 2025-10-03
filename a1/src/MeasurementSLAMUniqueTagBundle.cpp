@@ -190,7 +190,7 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
             // solve PnP to get marker pose relative to camera
             cv::Mat rvec, tvec;
             cv::solvePnP(markerCorners3D, imageCorners, camera_.cameraMatrix, 
-                        camera_.distCoeffs, rvec, tvec);
+                        camera_.distCoeffs, rvec, tvec, false, cv::SOLVEPNP_IPPE_SQUARE);
             
             // convert to pose
             Pose<double> Tcj(rvec, tvec);  // marker relative to camera

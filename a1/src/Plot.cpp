@@ -585,10 +585,25 @@ void Plot::render()
     const std::vector<int>& associations = measurementBundle ? measurementBundle->getAssociations() : std::vector<int>();
     const std::vector<bool>& visibility = measurementBundle ? measurementBundle->getVisibility() : std::vector<bool>();
 
+    // Resize tracking vector if needed
+    if (landmarkHasBeenUpdated_.size() < pSystem->numberLandmarks()) {
+        landmarkHasBeenUpdated_.resize(pSystem->numberLandmarks(), false);
+    }
+
     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)
     {
         bool isVisible = (i < visibility.size()) ? visibility[i] : false;
         bool isAssociated = (i < associations.size() && associations[i] >= 0);
+        
+        // Mark landmark as updated if it's associated this frame
+        if (isAssociated) {
+            landmarkHasBeenUpdated_[i] = true;
+        }
+        
+        // Skip plotting landmarks that haven't been updated yet
+        if (!landmarkHasBeenUpdated_[i]) {
+            continue;
+        }
         
         // Determine color based on visibility and association status
         if (isVisible && isAssociated) {

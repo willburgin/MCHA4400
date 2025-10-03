@@ -163,6 +163,7 @@ private:
     AxisPlot ap;
     BasisPlot bp;
     ImagePlot ip;
+    std::vector<bool> landmarkHasBeenUpdated_;
 };
 
 #endif
