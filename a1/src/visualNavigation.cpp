@@ -97,21 +97,21 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
 
                 // best solution so far - individual state scaling:
-                initialCov.diagonal()(0) *= 0.02;  // vx
-                initialCov.diagonal()(1) *= 0.02;  // vy  
-                initialCov.diagonal()(2) *= 0.02;  // vz
+                initialCov.diagonal()(0) *= 0.3;  // vx
+                initialCov.diagonal()(1) *= 0.3;  // vy  
+                initialCov.diagonal()(2) *= 0.3;  // vz
                 
-                initialCov.diagonal()(3) *= 0.05;  // wx
-                initialCov.diagonal()(4) *= 0.05;  // wy
-                initialCov.diagonal()(5) *= 0.05;  // wz
+                initialCov.diagonal()(3) *= 0.1;  // wx
+                initialCov.diagonal()(4) *= 0.1;  // wy
+                initialCov.diagonal()(5) *= 0.1;  // wz
                 
-                initialCov.diagonal()(6) *= 0.0002;  // x
-                initialCov.diagonal()(7) *= 0.0002;  // y
-                initialCov.diagonal()(8) *= 0.0002;  // z
+                initialCov.diagonal()(6) *= 0.03;  // x
+                initialCov.diagonal()(7) *= 0.03;  // y
+                initialCov.diagonal()(8) *= 0.03;  // z
                 
-                initialCov.diagonal()(9) *= 0.0001;  // roll
-                initialCov.diagonal()(10) *= 0.0001; // pitch
-                initialCov.diagonal()(11) *= 0.0001; // yaw
+                initialCov.diagonal()(9) *= 0.01;  // roll
+                initialCov.diagonal()(10) *= 0.01; // pitch
+                initialCov.diagonal()(11) *= 0.01; // yaw
 
                 // initialCov.diagonal().head(6) *= 0.001;
                 // initialCov.diagonal().segment(6, 6) *= 0.001;
