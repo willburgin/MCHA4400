@@ -93,15 +93,28 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 int stateDim = 12; // Only body states initially
                 
                 Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(stateDim);
-                
+                initialMean(8) = -1.8;
                 Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
 
-                // best solution so far:
+                // best solution so far - individual state scaling:
+                initialCov.diagonal()(0) *= 0.02;  // vx
+                initialCov.diagonal()(1) *= 0.02;  // vy  
+                initialCov.diagonal()(2) *= 0.02;  // vz
+                
+                initialCov.diagonal()(3) *= 0.05;  // wx
+                initialCov.diagonal()(4) *= 0.05;  // wy
+                initialCov.diagonal()(5) *= 0.05;  // wz
+                
+                initialCov.diagonal()(6) *= 0.0002;  // x
+                initialCov.diagonal()(7) *= 0.0002;  // y
+                initialCov.diagonal()(8) *= 0.0002;  // z
+                
+                initialCov.diagonal()(9) *= 0.0001;  // roll
+                initialCov.diagonal()(10) *= 0.0001; // pitch
+                initialCov.diagonal()(11) *= 0.0001; // yaw
+
                 // initialCov.diagonal().head(6) *= 0.001;
                 // initialCov.diagonal().segment(6, 6) *= 0.001;
-
-                initialCov.diagonal().head(6) *= 0.06;
-                initialCov.diagonal().segment(6, 6) *= 0.0003;
                 
                 auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
                 system = std::make_unique<SystemSLAMPoseLandmarks>(initialDensity);

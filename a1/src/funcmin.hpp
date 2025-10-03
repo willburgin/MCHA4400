@@ -559,7 +559,7 @@ int BFGSTrustSqrt(Func costFunc, Eigen::VectorXd & x, Eigen::VectorXd & g, Eigen
     if (!std::isfinite(f) || !g.allFinite())        // if any nan, -inf or +inf
     {
         if (verbosity > 1)
-            std::println("ERROR: Initial point is not in domain of cost function");
+            std::println("ERROR: Initial point is not in domain of cost function"); // initial means
         return -1;
     }
 

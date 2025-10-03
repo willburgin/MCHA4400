@@ -299,10 +299,10 @@ ArucoDetectionResult detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
     cv::aruco::ArucoDetector detector(dictionary, detectorParams);
 
     detector.detectMarkers(gray, markerCorners, markerIds, rejectedCandidates);
-    std::println("Image width: {}", img.cols);
-    std::println("Image height: {}", img.rows);
-    std::println("Markers {}",   markerCorners.size());
-    std::println("{:<5} {:<10} {:<10}", "ID", "X", "Y");
+    // std::println("Image width: {}", img.cols);
+    // std::println("Image height: {}", img.rows);
+    // std::println("Markers {}",   markerCorners.size());
+    // std::println("{:<5} {:<10} {:<10}", "ID", "X", "Y");
 
     // Combine markerIds and markerCorners together and sort by ID
     std::vector<std::pair<int, std::vector<cv::Point2f>>> sortedMarkers;
@@ -318,12 +318,12 @@ ArucoDetectionResult detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
     // Then iterate through sorted markers
     for (const auto& [id, corners] : sortedMarkers)
     {
-        std::println("ID: {:<5} with corners: ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f})",
-            id,
-            corners[0].x, corners[0].y,
-            corners[1].x, corners[1].y,
-            corners[2].x, corners[2].y,
-            corners[3].x, corners[3].y);
+        // std::println("ID: {:<5} with corners: ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f})",
+        //     id,
+        //     corners[0].x, corners[0].y,
+        //     corners[1].x, corners[1].y,
+        //     corners[2].x, corners[2].y,
+        //     corners[3].x, corners[3].y);
 
         // Draw green circles at all 4 corners
         for (const auto& pt : corners) {
