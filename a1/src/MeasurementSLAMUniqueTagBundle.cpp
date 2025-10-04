@@ -203,7 +203,7 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
             Eigen::VectorXd mu_new(6);
             mu_new << posInit, oriInit;
             
-            double epsilon = 45;
+            double epsilon = 50;
             Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(6, 6);
             Eigen::VectorXd nu_new = Xi_new * mu_new;
             

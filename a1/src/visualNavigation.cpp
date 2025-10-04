@@ -103,15 +103,15 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 
                 initialCov.diagonal()(3) *= 0.2;  // wx
                 initialCov.diagonal()(4) *= 0.2;  // wy
-                initialCov.diagonal()(5) *= 0.25;  // wz
+                initialCov.diagonal()(5) *= 0.3;  // wz
                 
-                initialCov.diagonal()(6) *= 0.05;  // x
-                initialCov.diagonal()(7) *= 0.05;  // y
-                initialCov.diagonal()(8) *= 0.005;  // z
+                initialCov.diagonal()(6) *= 0.01;  // x
+                initialCov.diagonal()(7) *= 0.01;  // y
+                initialCov.diagonal()(8) *= 0.01;  // z
                 
-                initialCov.diagonal()(9) *= 0.08;  // roll
-                initialCov.diagonal()(10) *= 0.08; // pitch
-                initialCov.diagonal()(11) *= 0.08; // yaw
+                initialCov.diagonal()(9) *= 0.01;  // roll
+                initialCov.diagonal()(10) *= 0.01; // pitch
+                initialCov.diagonal()(11) *= 0.01; // yaw
 
                 // initialCov.diagonal().head(6) *= 0.001;
                 // initialCov.diagonal().segment(6, 6) *= 0.001;
