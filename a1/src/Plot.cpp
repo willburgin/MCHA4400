@@ -540,12 +540,12 @@ Plot::Plot(const Camera & camera)
     imageRenderer->AddActor2D(ip.getActor());
 
     threeDimRenderer->GetActiveCamera()->Azimuth(0);
-    threeDimRenderer->GetActiveCamera()->Elevation(165);
+    threeDimRenderer->GetActiveCamera()->Elevation(0);
     // rFNn
-    threeDimRenderer->GetActiveCamera()->SetFocalPoint(0,0,0);
+    threeDimRenderer->GetActiveCamera()->SetFocalPoint(-3,-5,-5);
     // rCNn
-    double sc = 10;
-    threeDimRenderer->GetActiveCamera()->SetPosition(-0.75*sc,-0.75*sc,-0.5*sc);
+    double sc = 4;
+    threeDimRenderer->GetActiveCamera()->SetPosition(-2.0*sc,-2.0*sc,-2.0*sc);
     threeDimRenderer->GetActiveCamera()->SetViewUp(0,0,-1);
 
     vtkNew<vtkInteractorStyleTrackballCamera> interactorStyle;
