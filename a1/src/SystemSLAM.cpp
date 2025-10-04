@@ -117,10 +117,10 @@ GaussianInfo<double> SystemSLAM::processNoiseDensity(double dt) const
     // TODO: Assignment(s) Tuning parameters
     const double sigma_vx = 0.05;  // m/s / sqrt(s)
     const double sigma_vy = 0.05;  // m/s / sqrt(s)
-    const double sigma_vz = 0.05;  // m/s / sqrt(s)
-    const double sigma_p  = 0.04;  // rad/s / sqrt(s)
-    const double sigma_q  = 0.04;  // rad/s / sqrt(s)
-    const double sigma_r  = 0.04;  // rad/s / sqrt(s)
+    const double sigma_vz = 0.07;  // m/s / sqrt(s)
+    const double sigma_p  = 0.05;  // rad/s / sqrt(s)
+    const double sigma_q  = 0.05;  // rad/s / sqrt(s)
+    const double sigma_r  = 0.09;  // rad/s / sqrt(s)
 
     Eigen::Matrix<double, 6, 6> SQ = Eigen::Matrix<double, 6, 6>::Zero();
     SQ(0,0) = sigma_vx;
