@@ -32,19 +32,19 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     cv::FileStorage fs(cameraPath.string(), cv::FileStorage::READ);
     assert(fs.isOpened());
     fs["camera"] >> camera;
-
+    // align frame of body to camera frame
     Eigen::Matrix3d Rbc;
-    Rbc << 0, 0, 1,   // b1 = c3
+    Rbc << 0, 0, 1,     // b1 = c3
             1, 0, 0,   // b2 = c1
             0, 1, 0;   // b3 = c2
 
     camera.Tbc.rotationMatrix = Rbc;
     camera.Tbc.translationVector = Eigen::Vector3d::Zero();
 
-    // Display loaded calibration data
+    // display loaded calibration data
     camera.printCalibration();
 
-    // Open input video
+    // open input video
     cv::VideoCapture cap(videoPath.string());
     assert(cap.isOpened());
     int nFrames = cap.get(cv::CAP_PROP_FRAME_COUNT);
@@ -59,20 +59,20 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     cv::VideoWriter videoOut;
     BufferedVideoWriter bufferedVideoWriter(3);
     bool videoWriterOpened = false;
-    // SLAM System Initialization for Scenario 1
+    // SLAM system initialization for scenario 1
     std::unique_ptr<SystemSLAMPoseLandmarks> system;
     std::unique_ptr<MeasurementSLAMUniqueTagBundle> measurement;
     bool systemInitialized = false;
     
     double time = 0.0;
 
-    // Track frame number for interactive mode
+    // track frame number for interactive mode
     static int frameCount = 0;
 
 
     while (true)
     {
-        // Get next input frame
+        // get next input frame
         cv::Mat imgin = bufferedVideoReader.read();
         if (imgin.empty())
         {
@@ -89,14 +89,14 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             
             if (!systemInitialized)
             {
-                // Initialize system with NO landmarks initially - let it grow dynamically
-                int stateDim = 12; // Only body states initially
+                // initialize system with NO landmarks initially - let it grow dynamically
+                int stateDim = 12; // only body states initially
                 
                 Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(stateDim);
                 initialMean(8) = -1.8;
                 Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
 
-                // best solution so far - individual state scaling:
+                // best solution so far - individual state scaling
                 initialCov.diagonal()(0) *= 0.3;  // vx
                 initialCov.diagonal()(1) *= 0.3;  // vy  
                 initialCov.diagonal()(2) *= 0.3;  // vz
@@ -112,24 +112,21 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 initialCov.diagonal()(9) *= 0.01;  // roll
                 initialCov.diagonal()(10) *= 0.01; // pitch
                 initialCov.diagonal()(11) *= 0.01; // yaw
-
-                // initialCov.diagonal().head(6) *= 0.001;
-                // initialCov.diagonal().segment(6, 6) *= 0.001;
                 
                 auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
                 system = std::make_unique<SystemSLAMPoseLandmarks>(initialDensity);
                 systemInitialized = true;
             }
             
-            // SLAM ESTIMATION LOOP - let the system grow dynamically
+            // SLAM estimation loop - let the system grow dynamically
             
-            // 1. Predict state forward in time
+            // predict state forward in time
             std::cout << "Before predict - system dim: " << system->density.dim() << std::endl;
             system->predict(time);
             std::cout << "After predict - system dim: " << system->density.dim() << std::endl;
 
             
-            // 2. Create measurement with ALL detected ArUco data (even new markers)
+            // create measurement with ALL detected ArUco data (even new markers)
             if (!result.markerIds.empty())
             {
                 int numMarkers = result.markerIds.size();
@@ -147,14 +144,14 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 measurement = std::make_unique<MeasurementSLAMUniqueTagBundle>(time, Y, camera);
                 // Set the detected marker IDs
                 measurement->setFrameMarkerIDs(result.markerIds);                
-                // 3. Process measurement - this handles data association and landmark initialization
+                // process measurement - this handles data association and landmark initialization
                 std::cout << "Before measurement update - system dim: " << system->density.dim() << std::endl;
                 measurement->process(*system);
                 std::cout << "After measurement update - system dim: " << system->density.dim() << std::endl;
 
             }
             
-            // 4. Update visualization
+            // update visualization
             system->view() = outputFrame.clone();
             if (measurement) {
                 plot.setData(*system, *measurement);

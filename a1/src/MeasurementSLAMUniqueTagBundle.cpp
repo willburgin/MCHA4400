@@ -39,71 +39,70 @@ Eigen::VectorXd MeasurementSLAMUniqueTagBundle::simulate(const Eigen::VectorXd &
     return y;
 }
 
-// Regular version (no derivatives)
+// build the log-likelihood function
 double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const
 {
     const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
     return logLikelihoodTemplated<double>(x, systemSLAM);
 }
 
-// Gradient version using GaussianInfo log function with chain rule
+// gradient version using GaussianInfo log function with chain rule
 double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
 {
     const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
     
-    // Compute log-likelihood using the base function
+    // compute log-likelihood using the base function
     double logLik = logLikelihood(x, system);
     
-    // Initialize gradient
+    // initialize gradient
     g = Eigen::VectorXd::Zero(x.size());
     
-    // Create measurement noise model: N(0, σ²I) for a single corner
+    // create measurement noise model for a single corner
     Eigen::MatrixXd S = sigma_ * Eigen::MatrixXd::Identity(2, 2);
     GaussianInfo<double> measurementModel = GaussianInfo<double>::fromSqrtMoment(S);
     
-    // Compute gradient for all associated feature/landmark pairs
+    // compute gradient for all associated feature/landmark pairs
     for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
-        if (idxFeatures_[j] >= 0) {  // This landmark is associated
+        if (idxFeatures_[j] >= 0) {  
             int detectionIdx = idxFeatures_[j];
             
-            // Predict all 4 corners with Jacobian
+            // predict all 4 corners with Jacobian
             Eigen::MatrixXd J_h;
             Eigen::Matrix<double, 8, 1> h_pred = predictFeature(x, J_h, systemSLAM, j);
             
-            // Sum over all 4 corners
+            // sum over all 4 corners
             for (int c = 0; c < 4; ++c) {
-                // Get measured corner position
+                // get measured corner position
                 Eigen::Vector2d y_ic = Y_.block<2, 1>(2*c, detectionIdx);
                 
-                // Get predicted corner position
+                // get predicted corner position
                 Eigen::Vector2d h_ic = h_pred.segment<2>(2*c);
                 
-                // Compute residual
+                // compute residual
                 Eigen::Vector2d residual = y_ic - h_ic;
                 
-                // Use GaussianInfo log function to get gradient w.r.t. residual
+                // use GaussianInfo log function to get gradient w.r.t. residual
                 Eigen::VectorXd g_residual;
                 measurementModel.log(residual, g_residual);
                 
-                // Chain rule: dL/dx = dL/d(residual) * d(residual)/dx
-                // residual = y - h(x), so d(residual)/dx = -dh/dx
+                // chain rule
                 Eigen::MatrixXd J_corner = J_h.block(2*c, 0, 2, x.size());
                 g += -J_corner.transpose() * g_residual;
             }
         }
     }
     
-    // No gradient contribution from penalty term (constant w.r.t. x)
+    // no gradient contribution from penalty term (constant w.r.t. x)
     
     return logLik;
 }
 
-// Hessian version using forward-mode autodiff
+// hessian version using forward-mode autodiff
 double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const
 {
     const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
     
-    // Forward-mode autodifferentiation with dual2nd for Hessian
+    // forward-mode autodifferentiation with dual2nd for Hessian
     autodiff::dual2nd logLik_dual;
     Eigen::VectorX<autodiff::dual2nd> x_dual = x.cast<autodiff::dual2nd>();
     
@@ -141,12 +140,12 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
         {
             systemSLAM.addKnownMarkerID(detectedMarkerID);
             
-            // Get camera pose
+            // get camera pose
             auto camPos = systemSLAM.cameraPositionDensity(camera_).mean();
             auto camRpy = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
             Eigen::Matrix3d Rnc = rpy2rot(camRpy);
             
-            // Define marker corners in marker frame (same as in your associate function)
+            // define marker corners in marker frame 
             double l_half = 0.166 / 2.0;
             std::vector<cv::Point3f> markerCorners3D = {
                 cv::Point3f(-l_half,  l_half, 0.0f),
@@ -155,7 +154,7 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
                 cv::Point3f(-l_half, -l_half, 0.0f)
             };
             
-            // Get detected corners for this marker
+            // get detected corners for this marker
             std::vector<cv::Point2f> imageCorners;
             for (int c = 0; c < 4; ++c) {
                 imageCorners.push_back(cv::Point2f(Y_(2*c, detectionIdx), Y_(2*c+1, detectionIdx)));
@@ -170,8 +169,8 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
                         camera_.distCoeffs, rvec, tvec, false, cv::SOLVEPNP_IPPE_SQUARE);
             
             // convert to pose
-            Pose<double> Tcj(rvec, tvec);  // marker relative to camera
-            Pose<double> Tnj = Tnb * camera_.Tbc * Tcj;  // marker in world frame
+            Pose<double> Tcj(rvec, tvec);  
+            Pose<double> Tnj = Tnb * camera_.Tbc * Tcj; 
             
             // extract position and orientation
             Eigen::Vector3d posInit = Tnj.translationVector;
@@ -211,7 +210,7 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
     // create landmark pose
     Pose<double> Tnj;
     Tnj.translationVector = rJNn;
-    Tnj.rotationMatrix = rpy2rot(Thetanj);  // rotation matrix
+    Tnj.rotationMatrix = rpy2rot(Thetanj);  
 
     // aruco marker corner positions in marker frame 
     double l_half = 0.166 / 2.0; // half edge length in meters
@@ -223,7 +222,7 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
     };
 
     // compute predicted pixel coordinates for all 4 corners
-    Eigen::Matrix<double, 8, 1> h; // 4 corners × 2 coordinates = 8 values
+    Eigen::Matrix<double, 8, 1> h; // 4 corners × 2 coordinates = 8 
     
     // initialize Jacobian 
     J.resize(8, x.size()); // 8 measurement outputs × state size
@@ -301,7 +300,7 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
         J.block<2, 1>(2*i, 11) = J_camera * Rbc.transpose() * dRnb_dpsi.transpose() * rJcNn_minus_rBNn;   
 
         // (landmark orientation derivatives)
-        Eigen::Vector3d rJcJj_i = rJcJj[i]; // corner position in marker frame
+        Eigen::Vector3d rJcJj_i = rJcJj[i]; 
         J.block<2, 1>(2*i, idx+3) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dphi * rJcJj_i;     
         J.block<2, 1>(2*i, idx+4) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dtheta * rJcJj_i;     
         J.block<2, 1>(2*i, idx+5) = J_camera * Rbc.transpose() * Rnb.transpose() * dRnj_dpsi * rJcJj_i;     
@@ -309,7 +308,7 @@ Eigen::Matrix<double, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
     return h;
 }
 
-// Density of image feature location for a given landmark
+// density of image feature location for a given landmark
 GaussianInfo<double> MeasurementSLAMUniqueTagBundle::predictFeatureDensity(const SystemSLAM & system, std::size_t idxLandmark) const
 {
     const std::size_t & nx = system.density.dim();
@@ -418,7 +417,7 @@ const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemS
     const SystemSLAMPoseLandmarks & systemSLAM = dynamic_cast<const SystemSLAMPoseLandmarks &>(system);
     const std::vector<int>& knownMarkerIDs = systemSLAM.getKnownMarkerIDs();
     
-    // Get current state for visibility checking
+    // get current state for visibility checking
     Eigen::VectorXd x = systemSLAM.density.mean();
     Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
     Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
@@ -426,27 +425,27 @@ const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemS
     Tnc.translationVector = rCNn;
     Tnc.rotationMatrix = rpy2rot(Thetanc);
     
-    // Initialize
+    // initialize
     idxFeatures_.clear();
     idxFeatures_.resize(knownMarkerIDs.size(), -1);
     visibleLandmarks_.clear();
     visibleLandmarks_.resize(knownMarkerIDs.size(), false);
     
-    // Check visibility for ALL known landmarks (based on CENTER position)
+    // check visibility for all known landmarks (based on center)
     for (std::size_t landmarkIdx = 0; landmarkIdx < knownMarkerIDs.size(); ++landmarkIdx)
     {
         std::size_t stateIdx = systemSLAM.landmarkPositionIndex(landmarkIdx);
-        Eigen::Vector3d rJNn = x.segment<3>(stateIdx);  // Marker center position
+        Eigen::Vector3d rJNn = x.segment<3>(stateIdx);  
         
-        // Transform center to camera frame
+        // transform center to camera frame
         Eigen::Vector3d rJcCc = Tnc.rotationMatrix.transpose() * (rJNn - rCNn);
         
-        // Check if center is in front of camera
+        // check if center is in front of camera
         if (rJcCc(2) > 0.0) {
-            // Project center to image
+            // project center to image
             Eigen::Vector2d pixel = camera_.vectorToPixel(rJcCc);
             
-            // Check if center is within image bounds
+            // check if center is within image bounds
             if (pixel(0) >= 0 && pixel(0) < camera_.imageSize.width &&
                 pixel(1) >= 0 && pixel(1) < camera_.imageSize.height) {
                 visibleLandmarks_[landmarkIdx] = true;
@@ -454,7 +453,7 @@ const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemS
         }
     }
     
-    // Associate detected markers with visible landmarks
+    // associate detected markers with visible landmarks
     for (std::size_t detectionIdx = 0; detectionIdx < frameMarkerIDs_.size(); ++detectionIdx)
     {
         int detectedMarkerID = frameMarkerIDs_[detectionIdx];
