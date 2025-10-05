@@ -10,6 +10,7 @@
 #include "SystemSLAMPoseLandmarks.h"
 #include "MeasurementSLAMUniqueTagBundle.h"
 #include "Plot.h"
+#include "DuckDetectorONNX.h"
 
 void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const std::filesystem::path & cameraPath, int scenario, int interactive, const std::filesystem::path & outputDirectory)
 {
@@ -63,6 +64,27 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     std::unique_ptr<SystemSLAMPoseLandmarks> system;
     std::unique_ptr<MeasurementSLAMUniqueTagBundle> measurement;
     bool systemInitialized = false;
+    
+    // Duck detector initialization for scenario 2
+    std::unique_ptr<DuckDetectorONNX> duckDetector;
+    std::filesystem::path outputImageDirectory;
+    if (scenario == 2)
+    {
+        std::filesystem::path modelPath = "../data/duck_with_postprocessing.onnx";
+        duckDetector = std::make_unique<DuckDetectorONNX>(modelPath.string());
+        std::cout << "Duck detector initialized with model: " << modelPath << std::endl;
+        
+        // Create images subdirectory for scenario 2
+        if (doExport)
+        {
+            outputImageDirectory = outputDirectory / "images";
+            if (!std::filesystem::exists(outputImageDirectory))
+            {
+                std::cout << "Creating directory: " << outputImageDirectory << std::endl;
+                std::filesystem::create_directories(outputImageDirectory);
+            }
+        }
+    }
     
     double time = 0.0;
 
@@ -121,11 +143,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             // SLAM estimation loop - let the system grow dynamically
             
             // predict state forward in time
-            std::cout << "Before predict - system dim: " << system->density.dim() << std::endl;
             system->predict(time);
-            std::cout << "After predict - system dim: " << system->density.dim() << std::endl;
-
-            
             // create measurement with ALL detected ArUco data (even new markers)
             if (!result.markerIds.empty())
             {
@@ -140,14 +158,11 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                         Y(2*j + 1, i) = result.markerCorners[i][j].y; // y coordinate of corner j
                     }
                 }
-                std::cout << "Y: " << Y << std::endl;
                 measurement = std::make_unique<MeasurementSLAMUniqueTagBundle>(time, Y, camera);
                 // Set the detected marker IDs
                 measurement->setFrameMarkerIDs(result.markerIds);                
                 // process measurement - this handles data association and landmark initialization
-                std::cout << "Before measurement update - system dim: " << system->density.dim() << std::endl;
                 measurement->process(*system);
-                std::cout << "After measurement update - system dim: " << system->density.dim() << std::endl;
 
             }
             
@@ -156,6 +171,32 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             if (measurement) {
                 plot.setData(*system, *measurement);
                 plot.render();
+            }
+        }
+        else if (scenario == 2)
+        {
+            // Run duck detector
+            std::string baseName = videoPath.stem().string();
+            std::string frameName = baseName + "_" + std::to_string(frameCount);
+            std::cout << "Processing " << frameName << "..." << std::flush;
+            
+            outputFrame = duckDetector->detect(imgin);
+            
+            std::cout << " done" << std::endl;
+            
+            // Save images every 15 frames if exporting
+            if (doExport && (frameCount % 15 == 0))
+            {
+                std::string frameFilename = frameName + ".png";
+                std::string frameFilenameEval = frameName + "_eval.png";
+                
+                std::filesystem::path framePath = outputImageDirectory / frameFilename;
+                cv::imwrite(framePath.string(), imgin);
+                
+                std::filesystem::path frameAnnotatedPath = outputImageDirectory / frameFilenameEval;
+                cv::imwrite(frameAnnotatedPath.string(), outputFrame);
+                
+                std::cout << "  Saved: " << frameFilename << " and " << frameFilenameEval << std::endl;
             }
         }
         else if (scenario == 3)
@@ -172,28 +213,46 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             plot.start();
         }
 
-        if (doExport && systemInitialized && measurement)
+        if (doExport)
         {
-            cv::Mat imgout = plot.getFrame();
+            cv::Mat imgout;
             
-            // Open video writer on first frame (like Lab 3)
-            if (!videoWriterOpened)
+            // Get the appropriate output frame based on scenario
+            if (scenario == 1 && systemInitialized && measurement)
             {
-                int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-                videoOut.open(outputPath.string(), codec, fps, imgout.size());
-                
-                if (!videoOut.isOpened()) {
-                    std::cerr << "Failed to open video writer!" << std::endl;
-                    doExport = false;
-                } else {
-                    bufferedVideoWriter.start(videoOut);
-                    videoWriterOpened = true;
-                    std::cout << "Video writer opened: " << imgout.size() << " @ " << fps << " fps" << std::endl;
-                }
+                imgout = plot.getFrame();
+            }
+            else if (scenario == 2)
+            {
+                imgout = outputFrame;
+            }
+            else if (scenario == 3)
+            {
+                imgout = outputFrame;
             }
             
-            if (videoWriterOpened) {
-                bufferedVideoWriter.write(imgout);
+            // Write frame if we have output
+            if (!imgout.empty())
+            {
+                // Open video writer on first frame
+                if (!videoWriterOpened)
+                {
+                    int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+                    videoOut.open(outputPath.string(), codec, fps, imgout.size());
+                    
+                    if (!videoOut.isOpened()) {
+                        std::cerr << "Failed to open video writer!" << std::endl;
+                        doExport = false;
+                    } else {
+                        bufferedVideoWriter.start(videoOut);
+                        videoWriterOpened = true;
+                        std::cout << "Video writer opened: " << imgout.size() << " @ " << fps << " fps" << std::endl;
+                    }
+                }
+                
+                if (videoWriterOpened) {
+                    bufferedVideoWriter.write(imgout);
+                }
             }
         }
     }
