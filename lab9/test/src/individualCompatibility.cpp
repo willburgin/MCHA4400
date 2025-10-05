@@ -5,7 +5,7 @@
 #include "../../src/GaussianInfo.hpp"
 #include "../../src/association_util.h"
 
-SCENARIO("Individual compatibility" * doctest::skip())
+SCENARIO("Individual compatibility")
 {
     GIVEN("1 landmark, 3 features, 1 compatible feature")
     {

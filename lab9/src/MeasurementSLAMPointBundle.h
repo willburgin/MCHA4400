@@ -72,6 +72,7 @@ Eigen::VectorX<Scalar> MeasurementPointBundle::predictFeatureBundle(const Eigen:
         Eigen::Vector2<Scalar> rQOi = predictFeature(x, system, idxLandmarks[i]);
         // Set pair of elements of h
         // TODO: Lab 9
+        h.segment<2>(2*i) = rQOi;
     }
     return h;
 }
