@@ -39,60 +39,6 @@ Eigen::VectorXd MeasurementSLAMUniqueTagBundle::simulate(const Eigen::VectorXd &
     return y;
 }
 
-// Templated version for autodiff
-template <typename Scalar>
-Scalar MeasurementSLAMUniqueTagBundle::logLikelihoodTemplated(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system) const
-{
-    const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
-    
-    Scalar logLik = Scalar(0.0);
-    
-    // Count unassociated landmarks for penalty term
-    int numUnassociated = 0;
-    for (int assoc : idxFeatures_) {
-        if (assoc < 0) numUnassociated++;
-    }
-    
-    // Sum log-likelihoods over all associated feature/landmark pairs
-    for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
-        if (idxFeatures_[j] >= 0) {  // This landmark is associated
-            int detectionIdx = idxFeatures_[j];
-            // std::cout << "Using landmark " << j << " with detection " << detectionIdx 
-            // << " (marker ID " << frameMarkerIDs_[detectionIdx] << ")" << std::endl;
-            
-            // Predict all 4 corners for this landmark
-            Eigen::Matrix<Scalar, 8, 1> h_pred = predictFeature(x, systemSLAM, j);
-            
-            // Sum over all 4 corners
-            for (int c = 0; c < 4; ++c) {
-                // std::cout << "  Corner " << c << ": (" 
-                // << Y_(2*c, detectionIdx) << ", " 
-                // << Y_(2*c+1, detectionIdx) << ")" << std::endl;
-                // Get measured corner position (always double)
-                Eigen::Vector2d y_ic = Y_.block<2, 1>(2*c, detectionIdx);
-                
-                // Get predicted corner position
-                Eigen::Vector2<Scalar> h_ic = h_pred.template segment<2>(2*c);
-                
-                // Compute residual
-                Eigen::Vector2<Scalar> residual;
-                residual(0) = Scalar(y_ic(0)) - h_ic(0);
-                residual(1) = Scalar(y_ic(1)) - h_ic(1);
-                
-                // Add log-likelihood: log N(y; h, σ²I) = -||y-h||²/(2σ²) - log(2πσ²)
-                logLik += -Scalar(0.5) * residual.squaredNorm() / Scalar(sigma_ * sigma_);
-                logLik += -Scalar(std::log(2.0 * M_PI * sigma_ * sigma_));
-            }
-        }
-    }
-    
-    // // Add penalty term for unassociated visible landmarks
-    double imageArea = camera_.imageSize.width * camera_.imageSize.height;
-    logLik -= Scalar(4.0 * numUnassociated * std::log(imageArea));
-    
-    return logLik;
-}
-
 // Regular version (no derivatives)
 double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const
 {
@@ -100,25 +46,56 @@ double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, 
     return logLikelihoodTemplated<double>(x, systemSLAM);
 }
 
-// Gradient version using forward-mode autodiff
+// Gradient version using GaussianInfo log function with chain rule
 double MeasurementSLAMUniqueTagBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
 {
     const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
     
-    // Forward-mode autodifferentiation
-    autodiff::dual logLik_dual;
-    Eigen::VectorX<autodiff::dual> x_dual = x.cast<autodiff::dual>();
+    // Compute log-likelihood using the base function
+    double logLik = logLikelihood(x, system);
     
-    g = gradient(
-        [&](const Eigen::VectorX<autodiff::dual> & x_ad) { 
-            return logLikelihoodTemplated<autodiff::dual>(x_ad, systemSLAM); 
-        },
-        wrt(x_dual), 
-        at(x_dual), 
-        logLik_dual
-    );
+    // Initialize gradient
+    g = Eigen::VectorXd::Zero(x.size());
     
-    return val(logLik_dual);
+    // Create measurement noise model: N(0, σ²I) for a single corner
+    Eigen::MatrixXd S = sigma_ * Eigen::MatrixXd::Identity(2, 2);
+    GaussianInfo<double> measurementModel = GaussianInfo<double>::fromSqrtMoment(S);
+    
+    // Compute gradient for all associated feature/landmark pairs
+    for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
+        if (idxFeatures_[j] >= 0) {  // This landmark is associated
+            int detectionIdx = idxFeatures_[j];
+            
+            // Predict all 4 corners with Jacobian
+            Eigen::MatrixXd J_h;
+            Eigen::Matrix<double, 8, 1> h_pred = predictFeature(x, J_h, systemSLAM, j);
+            
+            // Sum over all 4 corners
+            for (int c = 0; c < 4; ++c) {
+                // Get measured corner position
+                Eigen::Vector2d y_ic = Y_.block<2, 1>(2*c, detectionIdx);
+                
+                // Get predicted corner position
+                Eigen::Vector2d h_ic = h_pred.segment<2>(2*c);
+                
+                // Compute residual
+                Eigen::Vector2d residual = y_ic - h_ic;
+                
+                // Use GaussianInfo log function to get gradient w.r.t. residual
+                Eigen::VectorXd g_residual;
+                measurementModel.log(residual, g_residual);
+                
+                // Chain rule: dL/dx = dL/d(residual) * d(residual)/dx
+                // residual = y - h(x), so d(residual)/dx = -dh/dx
+                Eigen::MatrixXd J_corner = J_h.block(2*c, 0, 2, x.size());
+                g += -J_corner.transpose() * g_residual;
+            }
+        }
+    }
+    
+    // No gradient contribution from penalty term (constant w.r.t. x)
+    
+    return logLik;
 }
 
 // Hessian version using forward-mode autodiff
