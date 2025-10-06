@@ -187,8 +187,10 @@ Eigen::VectorXd MeasurementDuckBundle::predictFeatureBundle(const Eigen::VectorX
         Eigen::Vector2d rQOi = predictFeature(x, Jfeature, system, idxLandmarks[i]);
         // Set pair of elements of h
         // TODO: Lab 9
+        h.segment<2>(2*i) = rQOi;
         // Set pair of rows of J
         // TODO: Lab 9
+        J.block<2, Eigen::Dynamic>(2*i, 0, 2, nx) = Jfeature; 
     }
     return h;
 }
