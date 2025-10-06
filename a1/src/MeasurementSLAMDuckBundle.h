@@ -27,10 +27,14 @@ public:
     virtual GaussianInfo<double> predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const override;
 
     virtual const std::vector<int> & associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) override;
+    // Templated log-likelihood for autodiff support (public for testing)
+    template <typename Scalar>
+    Scalar logLikelihoodTemplated(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system) const;
 protected:
     virtual void update(SystemBase & system) override;
     Eigen::Matrix<double, 2, Eigen::Dynamic> Y_;    // Feature bundle
-    double sigma_;                                  // Feature error standard deviation (in pixels)
+    double sigma_c_;                                  // Feature error standard deviation for centroid (in pixels)
+    double sigma_a_;                                  // Feature error standard deviation for area (in pixels)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
 };
 
@@ -72,9 +76,67 @@ Eigen::VectorX<Scalar> MeasurementDuckBundle::predictFeatureBundle(const Eigen::
         Eigen::Vector2<Scalar> rQOi = predictFeature(x, system, idxLandmarks[i]);
         // Set pair of elements of h
         // TODO: Lab 9
-        h.segment<2>(2*i) = rQOi;
+        h.template segment<2>(2*i) = rQOi;
     }
     return h;
+}
+
+template <typename Scalar>
+Scalar MeasurementDuckBundle::logLikelihoodTemplated(
+    const Eigen::VectorX<Scalar> & x, const SystemSLAM & system) const
+{
+    Scalar logLik = Scalar(0.0);
+    const Scalar fx = Scalar(camera_.cameraMatrix.at<double>(0, 0));
+    const Scalar fy = Scalar(camera_.cameraMatrix.at<double>(1, 1));
+    const Scalar duck_radius = Scalar(0.02);
+    
+    // Measurement noise models
+    Eigen::MatrixX<Scalar> S_centroid = Scalar(sigma_c_) * Eigen::MatrixX<Scalar>::Identity(2, 2);
+    GaussianInfo<Scalar> centroidModel = GaussianInfo<Scalar>::fromSqrtMoment(S_centroid);
+    
+    Eigen::MatrixX<Scalar> S_area(1, 1);
+    S_area(0, 0) = Scalar(sigma_a_);
+    GaussianInfo<Scalar> areaModel = GaussianInfo<Scalar>::fromSqrtMoment(S_area);
+    
+    // Sum over all associated duck measurements
+    for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
+        if (idxFeatures_[j] >= 0) {
+            int detectionIdx = idxFeatures_[j];
+            
+            // CENTROID LIKELIHOOD
+            // Predict centroid in pixels
+            Eigen::Vector2<Scalar> predicted_centroid = predictFeature(x, system, j);
+
+            // Get measured centroid (extract from Y_)
+            Eigen::Vector2d measured_centroid = Y_.block<2, 1>(0, detectionIdx); // First 2 rows
+            
+            // Compute residual
+            Eigen::Vector2<Scalar> centroid_residual;
+            centroid_residual(0) = Scalar(measured_centroid(0)) - predicted_centroid(0);
+            centroid_residual(1) = Scalar(measured_centroid(1)) - predicted_centroid(1);
+            
+            logLik += centroidModel.log(centroid_residual);
+            
+            // AREA LIKELIHOOD
+            // Predicted area
+            std::size_t idx = system.landmarkPositionIndex(j);
+            Eigen::Vector3<Scalar> rJNn = x.template segment<3>(idx);
+            Eigen::Vector3<Scalar> rCNn = system.cameraPosition(camera_, x);
+            Scalar distance_squared = (rCNn - rJNn).squaredNorm();
+            Scalar predicted_area = (Scalar(fx) * Scalar(fy) * Scalar(M_PI) * Scalar(duck_radius * duck_radius)) / distance_squared;
+            
+            // Get measured area (extract from Y_)
+            double measured_area = Y_(2, detectionIdx); // Third row
+            
+            // Compute residual
+            Eigen::Matrix<Scalar, 1, 1> area_residual;
+            area_residual(0) = Scalar(measured_area) - predicted_area;
+            
+            logLik += areaModel.log(area_residual);
+        }
+    }
+    
+    return logLik;
 }
 
 #endif

@@ -16,7 +16,8 @@
 MeasurementDuckBundle::MeasurementDuckBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
     , Y_(Y)
-    , sigma_(1.0) // TODO: Assignment(s)
+    , sigma_c_(1.0) // TODO: Assignment(s)
+    , sigma_a_(1.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
@@ -36,33 +37,55 @@ Eigen::VectorXd MeasurementDuckBundle::simulate(const Eigen::VectorXd & x, const
     return y;
 }
 
+// build the log-likelihood function
 double MeasurementDuckBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const
 {
     const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
-
-    // Select visible landmarks
-    std::vector<std::size_t> idxLandmarks(systemSLAM.numberLandmarks());
-    std::iota(idxLandmarks.begin(), idxLandmarks.end(), 0); // FIXME: This just selects all landmarks
-    // TODO: Assignment(s)
-    return 0.0;
+    return logLikelihoodTemplated<double>(x, systemSLAM);
 }
 
-double MeasurementDuckBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
+double MeasurementDuckBundle::logLikelihood(
+    const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
 {
-    // Evaluate gradient for Newton and quasi-Newton methods
-    g.resize(x.size());
-    g.setZero();
-    // TODO: Assignment(s)
-    return logLikelihood(x, system);
+    const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
+    
+    // Forward-mode autodiff
+    autodiff::dual logLik_dual;
+    Eigen::VectorX<autodiff::dual> x_dual = x.cast<autodiff::dual>();
+    
+    g = gradient(
+        [&](const Eigen::VectorX<autodiff::dual> & x_ad) { 
+            return logLikelihoodTemplated<autodiff::dual>(x_ad, systemSLAM); 
+        },
+        wrt(x_dual), 
+        at(x_dual), 
+        logLik_dual
+    );
+    
+    return val(logLik_dual);
 }
 
-double MeasurementDuckBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const
+double MeasurementDuckBundle::logLikelihood(
+    const Eigen::VectorXd & x, const SystemEstimator & system, 
+    Eigen::VectorXd & g, Eigen::MatrixXd & H) const
 {
-    // Evaluate Hessian for Newton method
-    H.resize(x.size(), x.size());
-    H.setZero();
-    // TODO: Assignment(s)
-    return logLikelihood(x, system, g);
+    const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
+    
+    // Forward-mode autodiff with dual2nd for Hessian
+    autodiff::dual2nd logLik_dual;
+    Eigen::VectorX<autodiff::dual2nd> x_dual = x.cast<autodiff::dual2nd>();
+    
+    H = hessian(
+        [&](const Eigen::VectorX<autodiff::dual2nd> & x_ad) { 
+            return logLikelihoodTemplated<autodiff::dual2nd>(x_ad, systemSLAM); 
+        },
+        wrt(x_dual), 
+        at(x_dual), 
+        logLik_dual,
+        g
+    );
+    
+    return val(logLik_dual);
 }
 
 void MeasurementDuckBundle::update(SystemBase & system)
@@ -167,7 +190,7 @@ GaussianInfo<double> MeasurementDuckBundle::predictFeatureDensity(const SystemSL
         return ya;
     };
     
-    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_*Eigen::MatrixXd::Identity(ny, ny));
+    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_c_*Eigen::MatrixXd::Identity(ny, ny));
     auto pxv = system.density*pv;   // p(x, v) = p(x)*p(v)
     return pxv.affineTransform(func);
 }
@@ -218,7 +241,7 @@ GaussianInfo<double> MeasurementDuckBundle::predictFeatureBundleDensity(const Sy
         return ya;
     };
 
-    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_*Eigen::MatrixXd::Identity(ny, ny));
+    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_c_*Eigen::MatrixXd::Identity(ny, ny));
     auto pxv = system.density*pv;   // p(x, v) = p(x)*p(v)
     return pxv.affineTransform(func);
 }
