@@ -116,10 +116,10 @@ DuckDetectorONNX::DuckDetectorONNX(const std::string & model_path)
     session = Ort::Session(env, model_path.c_str(), session_options);
 }
 
-cv::Mat DuckDetectorONNX::detect(const cv::Mat & image)
+DuckDetectionResult DuckDetectorONNX::detect(const cv::Mat & image)
 {
-    cv::Mat imgout;
-    image.convertTo(imgout, CV_8UC3, 0.5, 0); // Darken the image
+    DuckDetectionResult result;
+    image.convertTo(result.image, CV_8UC3, 0.5, 0); // Darken the image
 
     std::vector<float> input_tensor_values(3 * 512 * 512);
     preprocess(image, input_tensor_values);
@@ -140,7 +140,7 @@ cv::Mat DuckDetectorONNX::detect(const cv::Mat & image)
     std::vector<float> class_scores_vec(class_scores_data, class_scores_data + class_scores.GetTensorTypeAndShapeInfo().GetElementCount());
     std::vector<float> mask_probs_vec(mask_probs_data, mask_probs_data + mask_probs.GetTensorTypeAndShapeInfo().GetElementCount());
 
-    postprocess(class_scores_vec, mask_probs_vec, class_scores_shape, mask_probs_shape, imgout);
+    postprocess(class_scores_vec, mask_probs_vec, class_scores_shape, mask_probs_shape, result.image, result.centroids, result.areas);
 
-    return imgout;
+    return result;
 }

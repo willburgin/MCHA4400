@@ -85,6 +85,7 @@
 #include "MeasurementSLAM.h"
 #include "Plot.h"
 #include "MeasurementSLAMUniqueTagBundle.h"
+#include "MeasurementSLAMDuckBundle.h"
 
 // Forward declarations
 static void hsv2rgb(const double & h, const double & s, const double & v, double & r, double & g, double & b);
@@ -581,9 +582,46 @@ void Plot::render()
     }    
 
     // Get association and visibility information from measurement
-    const auto* measurementBundle = dynamic_cast<const MeasurementSLAMUniqueTagBundle*>(pMeasurement.get());
-    const std::vector<int>& associations = measurementBundle ? measurementBundle->getAssociations() : std::vector<int>();
-    const std::vector<bool>& visibility = measurementBundle ? measurementBundle->getVisibility() : std::vector<bool>();
+    const auto* measurementTagBundle = dynamic_cast<const MeasurementSLAMUniqueTagBundle*>(pMeasurement.get());
+    const auto* measurementDuckBundle = dynamic_cast<const MeasurementDuckBundle*>(pMeasurement.get());
+    
+    std::vector<int> associations;
+    std::vector<bool> visibility;
+    
+    if (measurementTagBundle) {
+        associations = measurementTagBundle->getAssociations();
+        visibility = measurementTagBundle->getVisibility();
+    } else if (measurementDuckBundle) {
+        associations = measurementDuckBundle->getAssociations();
+        
+        // For ducks, properly determine visibility by checking FOV
+        visibility.resize(pSystem->numberLandmarks(), false);
+        
+        Eigen::VectorXd x = pSystem->density.mean();
+        Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
+        Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
+        Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
+        
+        for (size_t i = 0; i < pSystem->numberLandmarks(); ++i) {
+            std::size_t idx = pSystem->landmarkPositionIndex(i);
+            Eigen::Vector3d rJNn = x.segment<3>(idx);
+            
+            // Transform to camera frame
+            Eigen::Vector3d rJCc = Rnc.transpose() * (rJNn - rCNn);
+            
+            // Check if in front of camera
+            if (rJCc(2) > 0.0) {
+                // Project to image
+                Eigen::Vector2d pixel = camera.vectorToPixel(rJCc);
+                
+                // Check if within image bounds
+                if (pixel(0) >= 0 && pixel(0) < camera.imageSize.width &&
+                    pixel(1) >= 0 && pixel(1) < camera.imageSize.height) {
+                    visibility[i] = true;
+                }
+            }
+        }
+    }
 
     // Resize tracking vector if needed
     if (landmarkHasBeenUpdated_.size() < pSystem->numberLandmarks()) {
@@ -642,8 +680,8 @@ void Plot::render()
         if (inFrontOfCamera && centerInBounds) {
             plotGaussianConfidenceEllipse(pSystem->view(), prQOi, rgb);
             
-            // Only draw border if associated (detected)
-            if (isAssociated) {
+            // Only draw border for pose landmarks (ArUco tags), not point landmarks (ducks)
+            if (isAssociated && measurementTagBundle) {
                 Eigen::Vector3d Thetanj = x.segment<3>(idx + 3);
                 Eigen::Matrix3d Rnj = rpy2rot(Thetanj);
                 

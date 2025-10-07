@@ -32,7 +32,7 @@ void DuckDetectorBase::preprocess(const cv::Mat & img, std::vector<float> & inpu
 
 void DuckDetectorBase::postprocess(const std::vector<float> & class_scores_data, const std::vector<float> & mask_probs_data,
                                    const std::vector<std::int64_t> & class_scores_shape, const std::vector<std::int64_t> & mask_probs_shape,
-                                   cv::Mat & imgout)
+                                   cv::Mat & imgout, std::vector<cv::Point2f> & centroids, std::vector<int> & areas)
 {
     int num_queries = mask_probs_shape[1];
     int mask_height = mask_probs_shape[2];
@@ -42,8 +42,9 @@ void DuckDetectorBase::postprocess(const std::vector<float> & class_scores_data,
     cv::Mat labelMask = cv::Mat::zeros(imgout.size(), CV_32SC1);
     int label = 1;
     std::vector<int> validLabels;
-    std::vector<cv::Point2f> centroids;
-    std::vector<int> areas;
+    // Clear output vectors
+    centroids.clear();
+    areas.clear();
 
     for (int query = 0; query < num_queries; ++query)
     {
@@ -104,7 +105,6 @@ void DuckDetectorBase::postprocess(const std::vector<float> & class_scores_data,
     }
 
     // Draw centroids and labels onto imgout
-    // TODO: Lab 3
     for (size_t i = 0; i < centroids.size(); ++i)
     {
         cv::Point center(cvRound(centroids[i].x), cvRound(centroids[i].y));
@@ -126,5 +126,4 @@ void DuckDetectorBase::postprocess(const std::vector<float> & class_scores_data,
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1,
                     cv::LINE_AA);
     }
-
 }

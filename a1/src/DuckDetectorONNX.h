@@ -12,7 +12,7 @@ class DuckDetectorONNX : public DuckDetectorBase
 {
 public:
     explicit DuckDetectorONNX(const std::string & model_path);
-    virtual cv::Mat detect(const cv::Mat & image) override;
+    virtual DuckDetectionResult detect(const cv::Mat & image) override;
 
 private:
     Ort::Env env;
