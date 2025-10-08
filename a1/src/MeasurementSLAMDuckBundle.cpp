@@ -19,9 +19,8 @@
 MeasurementDuckBundle::MeasurementDuckBundle(double time, const Eigen::Matrix<double, 3, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
     , Y_(Y)
-    , sigma_c_(7.0) // TODO: Assignment(s)
-    , sigma_a_(14.0) // TODO: Assignment(s)
-    , d_(2.0) // Initial depth for new landmarks (in meters)
+    , sigma_c_(10.0) // TODO: Assignment(s)
+    , sigma_a_(50.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
@@ -96,151 +95,151 @@ void MeasurementDuckBundle::update(SystemBase & system)
 {
     SystemSLAM & systemSLAM = dynamic_cast<SystemSLAM &>(system);
     
-    // Associate detected features with existing landmarks
-    std::vector<std::size_t> idxLandmarks;
+    // Filter to only visible landmarks using FOV check
+    Eigen::VectorXd x = systemSLAM.density.mean();
+    Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
+    Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
+    Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
+    
+    visibleLandmarks_.clear();
     for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i)
     {
-        idxLandmarks.push_back(i);
+        std::size_t idx = systemSLAM.landmarkPositionIndex(i);
+        Eigen::Vector3d rJNn = x.segment<3>(idx);
+        
+        // Transform to camera frame
+        Eigen::Vector3d rJCc = Rnc.transpose() * (rJNn - rCNn);
+        
+        cv::Vec3d rJCc_cv(rJCc(0), rJCc(1), rJCc(2));
+        if (camera_.isVectorWithinFOV(rJCc_cv)) {
+            visibleLandmarks_.push_back(i);
+        }
     }
-    idxFeatures_ = associate(systemSLAM, idxLandmarks);
     
-    // Find which detections are already associated (to avoid re-initialization)
+    idxFeatures_ = associate(systemSLAM, visibleLandmarks_);
+    
+    // Find which detections are already associated
     std::vector<bool> detectionUsed(Y_.cols(), false);
     for (int idx : idxFeatures_) {
         if (idx >= 0) {
             detectionUsed[idx] = true;
         }
     }
+    // Print association info BEFORE checking initialization constraints
+    int numAssoc = std::count_if(idxFeatures_.begin(), idxFeatures_.end(), 
+    [](int i){ return i >= 0; });
+    std::cout << "=== BEFORE Measurement::update() ===" << std::endl;
+    std::cout << "  Total landmarks: " << systemSLAM.numberLandmarks() << std::endl;
+    std::cout << "  Visible landmarks: " << visibleLandmarks_.size() << std::endl;
+    std::cout << "  idxFeatures_ size: " << idxFeatures_.size() << std::endl;
+    std::cout << "  Successful associations: " << numAssoc << std::endl;
+    // Landmark initialization constraints
+    int maxVisibleLandmarksPerFrame = 6;     // Max landmarks visible at once
+    int maxTotalLandmarks = 60;              // Total capacity
+    int currentVisible = visibleLandmarks_.size();
+    int currentTotal = systemSLAM.numberLandmarks();
     
-    // Loop over all detected ducks and initialize new landmarks for unassociated ones
+    // Calculate how many we can initialize
+    int spotsAvailableInFrame = maxVisibleLandmarksPerFrame - currentVisible;
+    int spotsAvailableTotal = maxTotalLandmarks - currentTotal;
+    int landmarksToInitialize = std::min(spotsAvailableInFrame, spotsAvailableTotal);
+    
+    if (landmarksToInitialize <= 0) {
+        // Either at total capacity or frame is full
+        std::cout << "=== BEFORE Measurement::update() ===" << std::endl;
+        std::cout << "  Total landmarks: " << currentTotal << std::endl;
+        std::cout << "  Visible landmarks: " << currentVisible << std::endl;
+        std::cout << "  Frame full or at capacity - no initialization" << std::endl;
+        
+        Measurement::update(system);
+        return;
+    }
+    
+    int landmarksInitializedThisFrame = 0;
+    
+    // Loop over all detected ducks and initialize new landmarks
     for (std::size_t detectionIdx = 0; detectionIdx < Y_.cols(); ++detectionIdx)
     {
+        if (landmarksInitializedThisFrame >= landmarksToInitialize) {
+            break;
+        }
+        
         if (!detectionUsed[detectionIdx])
         {
-            // Get camera pose
-            Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
-            Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
-            Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
-            
-            // Get measured centroid
             Eigen::Vector2d centroid_pixel = Y_.block<2, 1>(0, detectionIdx);
             
-            // Backproject centroid to 3D at fixed depth
-            cv::Vec2d centroid_cv(centroid_pixel(0), centroid_pixel(1));
-            cv::Vec3d rJCc_cv = camera_.pixelToVector(centroid_cv);
-            Eigen::Vector3d rJCc_unit(rJCc_cv[0], rJCc_cv[1], rJCc_cv[2]);
-            Eigen::Vector3d rJCc = rJCc_unit.normalized() * d_;  // Scale to fixed depth
+            // CHECK 1: Is detection too close to image border?
+            double borderMargin = 100.0;  // pixels
+            bool tooCloseToEdge = (centroid_pixel(0) < borderMargin || 
+                                centroid_pixel(0) > camera_.imageSize.width - borderMargin ||
+                                centroid_pixel(1) < borderMargin || 
+                                centroid_pixel(1) > camera_.imageSize.height - borderMargin);
             
-            // Transform to world frame
-            Eigen::Vector3d rJNn = Rnc * rJCc + rCNn;
+            if (tooCloseToEdge) {
+                continue;  // Skip this detection
+            }
             
-            // Create new landmark with weak prior
-            Eigen::VectorXd mu_new = rJNn;
-            double epsilon = 5.0;  // Prior precision for monocular depth uncertainty
-            Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(3, 3);
-            Eigen::VectorXd nu_new = Xi_new * mu_new;
+            // CHECK 2: Is this detection within 4-sigma confidence region of existing landmarks?
+            bool withinConfidenceRegion = false;
             
-            GaussianInfo<double> newLandmarkDensity = 
-                GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
+            for (size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
+                // Get predicted feature density for this landmark (2D in pixel space)
+                GaussianInfo<double> featureDensity = predictFeatureDensity(systemSLAM, i);
+                
+                // Check if detection is within 4-sigma confidence region
+                double nSigma = 4.0;
+                if (featureDensity.isWithinConfidenceRegion(centroid_pixel, nSigma)) {
+                    withinConfidenceRegion = true;
+                    break;
+                }
+            }
             
-            systemSLAM.density *= newLandmarkDensity;
+            if (!withinConfidenceRegion) {
+                double area_pixels = Y_(2, detectionIdx);
+                
+                // Estimate depth using inverse square relationship
+                double duck_radius = 0.03;
+                double fx = camera_.cameraMatrix.at<double>(0, 0);
+                double fy = camera_.cameraMatrix.at<double>(1, 1);
+                double estimated_depth = std::sqrt((fx * fy * duck_radius * duck_radius) / area_pixels);
+                estimated_depth = std::clamp(estimated_depth, 0.5, 10.0);
+                
+                // Backproject centroid to 3D at estimated depth
+                cv::Vec2d centroid_cv(centroid_pixel(0), centroid_pixel(1));
+                cv::Vec3d rJCc_cv = camera_.pixelToVector(centroid_cv);
+                Eigen::Vector3d rJCc_unit(rJCc_cv[0], rJCc_cv[1], rJCc_cv[2]);
+                Eigen::Vector3d rJCc = rJCc_unit.normalized() * estimated_depth;
+                
+                // Transform to world frame
+                Eigen::Vector3d rJNn = Rnc * rJCc + rCNn;
+                
+                // Create new landmark with prior
+                Eigen::VectorXd mu_new = rJNn;
+                double epsilon = 50.0;  // Prior precision
+                Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(3, 3);
+                Eigen::VectorXd nu_new = Xi_new * mu_new;
+                
+                GaussianInfo<double> newLandmarkDensity = 
+                    GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
+                
+                systemSLAM.density *= newLandmarkDensity;
+                landmarksInitializedThisFrame++;
+            }
         }
     }
     
-    // Measurement update with associated detections
+    std::cout << "=== BEFORE Measurement::update() ===" << std::endl;
+    Eigen::VectorXd x_before = systemSLAM.density.mean();
+    std::cout << "  Camera position before: " << x_before.segment<3>(6).transpose() << std::endl;
+    
+    // Measurement update
     Measurement::update(system);
+    
+    Eigen::VectorXd x_after = systemSLAM.density.mean();
+    std::cout << "=== AFTER Measurement::update() ===" << std::endl;
+    std::cout << "  Camera position after: " << x_after.segment<3>(6).transpose() << std::endl;
+    std::cout << "  Position change: " << (x_after.segment<3>(6) - x_before.segment<3>(6)).norm() << std::endl;
 }
-
-// void MeasurementDuckBundle::update(SystemBase & system)
-// {
-//     SystemSLAM & systemSLAM = dynamic_cast<SystemSLAM &>(system);
-//     std::vector<std::size_t> idxLandmarks;
-//     // Associate detected features with existing landmarks
-//     if (systemSLAM.numberLandmarks() > 0)
-//     {
-//         // Get camera pose for visibility check
-//         Eigen::VectorXd x = systemSLAM.density.mean();
-//         Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
-//         Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
-//         Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
-        
-//         // Only include visible landmarks in association
-//         for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) 
-//         {
-//             std::size_t idx = systemSLAM.landmarkPositionIndex(i);
-//             Eigen::Vector3d rJNn = x.segment<3>(idx);
-            
-//             // Transform to camera frame
-//             Eigen::Vector3d rJCc = Rnc.transpose() * (rJNn - rCNn);
-            
-//             // Check if in front of camera
-//             if (rJCc(2) > 0.0) {
-//                 // Project to image
-//                 Eigen::Vector2d pixel = camera_.vectorToPixel(rJCc);
-                
-//                 // Use camera FOV check
-//                 if (camera_.isVectorWithinFOV(cv::Vec3d(rJCc(0), rJCc(1), rJCc(2)))) {
-//                     idxLandmarks.push_back(i);
-//                 }
-//             }
-//         }
-        
-//         if (!idxLandmarks.empty()) {
-//             idxFeatures_ = associate(systemSLAM, idxLandmarks);
-//             std::cout << "Association: " << idxLandmarks.size() << " visible landmarks" << std::endl;
-//         } else {
-//             idxFeatures_.clear();
-//         }
-//     }
-    
-//     // Find unassociated detections (surplus features)
-//     std::vector<bool> detectionUsed(Y_.cols(), false);
-//     for (int idx : idxFeatures_) {
-//         if (idx >= 0) {
-//             detectionUsed[idx] = true;
-//         }
-//     }
-    
-//     // Initialize new landmarks from unassociated detections
-//     for (std::size_t detectionIdx = 0; detectionIdx < Y_.cols(); ++detectionIdx)
-//     {
-//         if (!detectionUsed[detectionIdx])
-//         {
-//             // Get camera pose
-//             Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
-//             Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
-//             Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
-            
-//             // Get measured centroid and area
-//             Eigen::Vector2d centroid_pixel = Y_.block<2, 1>(0, detectionIdx);
-
-//             // Backproject centroid to 3D at estimated depth
-//             cv::Vec2d centroid_cv(centroid_pixel(0), centroid_pixel(1));
-//             cv::Vec3d rJCc_cv = camera_.pixelToVector(centroid_cv);
-//             Eigen::Vector3d rJCc_unit(rJCc_cv[0], rJCc_cv[1], rJCc_cv[2]);
-//             Eigen::Vector3d rJCc = rJCc_unit.normalized() * d_;  // Scale to estimated depth
-            
-//             // Transform to world frame
-//             Eigen::Vector3d rJNn = Rnc * rJCc + rCNn;
-            
-//             // Create new landmark with weak prior
-//             Eigen::VectorXd mu_new = rJNn;
-//             double epsilon = 3.0;  // Prior precision for monocular depth uncertainty (increased from 0.1)
-//             Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(3, 3);
-//             Eigen::VectorXd nu_new = Xi_new * mu_new;
-            
-//             GaussianInfo<double> newLandmarkDensity = 
-//                 GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
-            
-//             systemSLAM.density *= newLandmarkDensity;
-//             // log the new landmark
-//             std::cout << "New landmark added: " << rJNn.transpose() << std::endl;
-//         }
-
-//     }
-//     // Measurement update with associated detections (only existing landmarks)
-//     Measurement::update(system);
-// }
 
 // Image feature location for a given landmark and Jacobian
 Eigen::Vector2d MeasurementDuckBundle::predictFeature(const Eigen::VectorXd & x, Eigen::MatrixXd & J, const SystemSLAM & system, std::size_t idxLandmark) const

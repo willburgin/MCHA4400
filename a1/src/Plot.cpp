@@ -609,16 +609,10 @@ void Plot::render()
             // Transform to camera frame
             Eigen::Vector3d rJCc = Rnc.transpose() * (rJNn - rCNn);
             
-            // Check if in front of camera
-            if (rJCc(2) > 0.0) {
-                // Project to image
-                Eigen::Vector2d pixel = camera.vectorToPixel(rJCc);
-                
-                // Check if within image bounds
-                if (pixel(0) >= 0 && pixel(0) < camera.imageSize.width &&
-                    pixel(1) >= 0 && pixel(1) < camera.imageSize.height) {
-                    visibility[i] = true;
-                }
+            // Use existing FOV check
+            cv::Vec3d rJCc_cv(rJCc(0), rJCc(1), rJCc(2));
+            if (camera.isVectorWithinFOV(rJCc_cv)) {
+                visibility[i] = true;
             }
         }
     }
@@ -634,7 +628,7 @@ void Plot::render()
         bool isAssociated = (i < associations.size() && associations[i] >= 0);
         
         // Mark landmark as updated if it's associated this frame
-        if (isAssociated) {
+        if (isVisible || isAssociated) {
             landmarkHasBeenUpdated_[i] = true;
         }
         

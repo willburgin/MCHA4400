@@ -440,14 +440,10 @@ const std::vector<int> & MeasurementSLAMUniqueTagBundle::associate(const SystemS
         // transform center to camera frame
         Eigen::Vector3d rJcCc = Tnc.rotationMatrix.transpose() * (rJNn - rCNn);
         
-        // check if center is in front of camera
+        // check if center is in front of camera AND within FOV
         if (rJcCc(2) > 0.0) {
-            // project center to image
-            Eigen::Vector2d pixel = camera_.vectorToPixel(rJcCc);
-            
-            // check if center is within image bounds
-            if (pixel(0) >= 0 && pixel(0) < camera_.imageSize.width &&
-                pixel(1) >= 0 && pixel(1) < camera_.imageSize.height) {
+            cv::Vec3d rJcCc_cv(rJcCc(0), rJcCc(1), rJcCc(2));
+            if (camera_.isVectorWithinFOV(rJcCc_cv)) {
                 visibleLandmarks_[landmarkIdx] = true;
             }
         }

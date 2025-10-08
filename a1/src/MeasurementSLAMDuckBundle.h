@@ -41,6 +41,7 @@ protected:
     double sigma_a_;                                  // Feature error standard deviation for area (in pixels)
     double d_;                                        // Initial depth for new landmarks (in meters)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
+    std::vector<size_t> visibleLandmarks_;              // Landmarks associated with visible features
 };
 
 // Image feature location for a given landmark
@@ -106,11 +107,13 @@ Scalar MeasurementDuckBundle::logLikelihoodTemplated(
     // Sum over all associated duck measurements
     for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
         if (idxFeatures_[j] >= 0) {
+            size_t landmarkIdx = visibleLandmarks_[j];
+
             int detectionIdx = idxFeatures_[j];
             
             // CENTROID LIKELIHOOD
             // Predict centroid in pixels
-            Eigen::Vector2<Scalar> predicted_centroid = predictFeature(x, system, j);
+            Eigen::Vector2<Scalar> predicted_centroid = predictFeature(x, system, landmarkIdx);
 
             // Get measured centroid (extract from Y_)
             Eigen::Vector2d measured_centroid = Y_.block<2, 1>(0, detectionIdx); // First 2 rows
@@ -124,7 +127,7 @@ Scalar MeasurementDuckBundle::logLikelihoodTemplated(
             
             // AREA LIKELIHOOD
             // Predicted area
-            std::size_t idx = system.landmarkPositionIndex(j);
+            std::size_t idx = system.landmarkPositionIndex(landmarkIdx);
             Eigen::Vector3<Scalar> rJNn = x.template segment<3>(idx);
             Eigen::Vector3<Scalar> rCNn = system.cameraPosition(camera_, x);
             Scalar distance_squared = (rCNn - rJNn).squaredNorm();
