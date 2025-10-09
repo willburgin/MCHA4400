@@ -40,7 +40,6 @@ protected:
     Eigen::Matrix<double, 3, Eigen::Dynamic> Y_;    // Feature bundle
     double sigma_c_;                                  // Feature error standard deviation for centroid (in pixels)
     double sigma_a_;                                  // Feature error standard deviation for area (in pixels)
-    double d_;                                        // Initial depth for new landmarks (in meters)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
     std::vector<size_t> visibleLandmarks_;              // Landmarks associated with visible features
 };

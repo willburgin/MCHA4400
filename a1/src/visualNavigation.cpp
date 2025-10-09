@@ -199,15 +199,15 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 initialCov.diagonal()(0) *= 0.01;  // vx
                 initialCov.diagonal()(1) *= 0.01;  // vy
                 initialCov.diagonal()(2) *= 0.01;  // vz
-                initialCov.diagonal()(3) *= 0.05;  // wx
-                initialCov.diagonal()(4) *= 0.05;  // wy
-                initialCov.diagonal()(5) *= 0.05;  // wz
+                initialCov.diagonal()(3) *= 0.3;  // wx
+                initialCov.diagonal()(4) *= 0.3;  // wy
+                initialCov.diagonal()(5) *= 0.3;  // wz
                 initialCov.diagonal()(6) *= 0.0005; // x
                 initialCov.diagonal()(7) *= 0.0005; // y
                 initialCov.diagonal()(8) *= 0.0005; // z
-                initialCov.diagonal()(9) *= 0.0005; // roll
-                initialCov.diagonal()(10) *= 0.0005; // pitch
-                initialCov.diagonal()(11) *= 0.0005; // yaw
+                initialCov.diagonal()(9) *= 0.0001; // roll
+                initialCov.diagonal()(10) *= 0.0001; // pitch
+                initialCov.diagonal()(11) *= 0.0001; // yaw
                 
                 auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
                 system = std::make_unique<SystemSLAMPointLandmarks>(initialDensity);
