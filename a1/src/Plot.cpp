@@ -592,34 +592,27 @@ void Plot::render()
         associations = measurementTagBundle->getAssociations();
         visibility = measurementTagBundle->getVisibility();
     } else if (measurementDuckBundle) {
-        associations = measurementDuckBundle->getAssociations();
+        // For ducks, associations and visibility need to be mapped from visible landmarks to global indices
+        const auto& visibleLandmarks = measurementDuckBundle->getVisibleLandmarks();
+        const auto& duckAssociations = measurementDuckBundle->getAssociations();
         
-        // For ducks, properly determine visibility by checking FOV
+        // Initialize with all landmarks not visible and not associated
         visibility.resize(pSystem->numberLandmarks(), false);
+        associations.resize(pSystem->numberLandmarks(), -1);
         
-        Eigen::VectorXd x = pSystem->density.mean();
-        Eigen::Vector3d rCNn = pSystem->cameraPositionDensity(camera).mean();
-        Eigen::Vector3d Thetanc = pSystem->cameraOrientationEulerDensity(camera).mean();
-        Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
-        
-        for (size_t i = 0; i < pSystem->numberLandmarks(); ++i) {
-            std::size_t idx = pSystem->landmarkPositionIndex(i);
-            Eigen::Vector3d rJNn = x.segment<3>(idx);
-            
-            // Transform to camera frame
-            Eigen::Vector3d rJCc = Rnc.transpose() * (rJNn - rCNn);
-            
-            // Use existing FOV check
-            cv::Vec3d rJCc_cv(rJCc(0), rJCc(1), rJCc(2));
-            if (camera.isVectorWithinFOV(rJCc_cv)) {
-                visibility[i] = true;
+        // Map visible landmarks to global indices
+        for (size_t j = 0; j < visibleLandmarks.size(); ++j) {
+            size_t globalIdx = visibleLandmarks[j];
+            if (globalIdx < pSystem->numberLandmarks()) {
+                visibility[globalIdx] = true;
+                associations[globalIdx] = duckAssociations[j];
             }
         }
     }
 
-    // Resize tracking vector if needed
+    // Resize tracking vector if needed, marking new landmarks as updated
     if (landmarkHasBeenUpdated_.size() < pSystem->numberLandmarks()) {
-        landmarkHasBeenUpdated_.resize(pSystem->numberLandmarks(), false);
+        landmarkHasBeenUpdated_.resize(pSystem->numberLandmarks(), true);  // New landmarks default to true
     }
 
     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)

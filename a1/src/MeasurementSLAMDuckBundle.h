@@ -28,8 +28,9 @@ public:
 
     virtual const std::vector<int> & associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) override;
     
-    // Accessor for associations (used by Plot)
+    // Accessors for associations and visibility (used by Plot)
     const std::vector<int>& getAssociations() const { return idxFeatures_; }
+    const std::vector<size_t>& getVisibleLandmarks() const { return visibleLandmarks_; }
     
     // Templated log-likelihood for autodiff support (public for testing)
     template <typename Scalar>
