@@ -19,7 +19,7 @@
 MeasurementDuckBundle::MeasurementDuckBundle(double time, const Eigen::Matrix<double, 3, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
     , Y_(Y)
-    , sigma_c_(10.0) // TODO: Assignment(s)
+    , sigma_c_(20.0) // TODO: Assignment(s)
     , sigma_a_(50.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
@@ -126,7 +126,7 @@ void MeasurementDuckBundle::update(SystemBase & system)
         }
     }
     // Landmark initialization constraints
-    int maxVisibleLandmarksPerFrame = 8;     // Max landmarks visible at once
+    int maxVisibleLandmarksPerFrame = 5;     // Max landmarks visible at once
     int maxTotalLandmarks = 60;              // Total capacity
     int currentVisible = visibleLandmarks_.size();
     int currentTotal = systemSLAM.numberLandmarks();
@@ -145,7 +145,7 @@ void MeasurementDuckBundle::update(SystemBase & system)
     bool hasSmallDucks = false;
     for (int detectionIdx = 0; detectionIdx < Y_.cols(); ++detectionIdx) {
         double area_pixels = Y_(2, detectionIdx);
-        if (area_pixels <= 6000) {
+        if (area_pixels >= 3000) {
             hasSmallDucks = true;
             break;
         }
@@ -191,8 +191,8 @@ void MeasurementDuckBundle::update(SystemBase & system)
             
             if (!withinConfidenceRegion) {                    
                 // Initialize if: (small duck) OR (no small ducks exist in frame)
-                if (area_pixels <= 6000 || !hasSmallDucks) {
-                    double duck_radius = 0.03;
+                if (area_pixels >= 3000 || !hasSmallDucks) {
+                    double duck_radius = 0.0325;
                     double fx = camera_.cameraMatrix.at<double>(0, 0);
                     double fy = camera_.cameraMatrix.at<double>(1, 1);
                     
@@ -211,13 +211,18 @@ void MeasurementDuckBundle::update(SystemBase & system)
                     
                     // Create new landmark with prior
                     Eigen::VectorXd mu_new = rJNn;
-                    double epsilon = 50.0;
+                    // double epsilon = 50.0;
+                    double epsilon = 5.0;
                     Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(3, 3);
                     Eigen::VectorXd nu_new = Xi_new * mu_new;
                     
                     GaussianInfo<double> newLandmarkDensity = GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
                     systemSLAM.density *= newLandmarkDensity;
                     landmarksInitializedThisFrame++;
+
+                    size_t newLandmarkIdx = systemSLAM.numberLandmarks() - 1;
+                    visibleLandmarks_.push_back(newLandmarkIdx);
+                    idxFeatures_.push_back(static_cast<int>(detectionIdx));
                 }
             }
         }

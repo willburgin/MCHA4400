@@ -195,19 +195,33 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 initialMean(8) = -1.0;
 
                 Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
-                // Scale initial uncertainties
-                initialCov.diagonal()(0) *= 0.01;  // vx
-                initialCov.diagonal()(1) *= 0.01;  // vy
-                initialCov.diagonal()(2) *= 0.01;  // vz
-                initialCov.diagonal()(3) *= 0.3;  // wx
-                initialCov.diagonal()(4) *= 0.3;  // wy
-                initialCov.diagonal()(5) *= 0.3;  // wz
-                initialCov.diagonal()(6) *= 0.0005; // x
-                initialCov.diagonal()(7) *= 0.0005; // y
-                initialCov.diagonal()(8) *= 0.0005; // z
-                initialCov.diagonal()(9) *= 0.0001; // roll
-                initialCov.diagonal()(10) *= 0.0001; // pitch
-                initialCov.diagonal()(11) *= 0.0001; // yaw
+                // // Scale initial uncertainties
+                // initialCov.diagonal()(0) *= 0.01;  // vx
+                // initialCov.diagonal()(1) *= 0.01;  // vy
+                // initialCov.diagonal()(2) *= 0.01;  // vz
+                // initialCov.diagonal()(3) *= 0.3;  // wx
+                // initialCov.diagonal()(4) *= 0.3;  // wy
+                // initialCov.diagonal()(5) *= 0.3;  // wz
+                // initialCov.diagonal()(6) *= 0.0005; // x
+                // initialCov.diagonal()(7) *= 0.0005; // y
+                // initialCov.diagonal()(8) *= 0.0005; // z
+                // initialCov.diagonal()(9) *= 0.0001; // roll
+                // initialCov.diagonal()(10) *= 0.0001; // pitch
+                // initialCov.diagonal()(11) *= 0.0001; // yaw
+
+                                // Scale initial uncertainties
+                initialCov.diagonal()(0) *= 0.4;  // vx
+                initialCov.diagonal()(1) *= 0.1;  // vy
+                initialCov.diagonal()(2) *= 0.1;  // vz
+                initialCov.diagonal()(3) *= 0.1;  // wx
+                initialCov.diagonal()(4) *= 0.1;  // wy
+                initialCov.diagonal()(5) *= 0.4;  // wz
+                initialCov.diagonal()(6) *= 0.005; // x
+                initialCov.diagonal()(7) *= 0.005; // y
+                initialCov.diagonal()(8) *= 0.005; // z
+                initialCov.diagonal()(9) *= 0.001; // roll
+                initialCov.diagonal()(10) *= 0.001; // pitch
+                initialCov.diagonal()(11) *= 0.001; // yaw
                 
                 auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
                 system = std::make_unique<SystemSLAMPointLandmarks>(initialDensity);
@@ -273,9 +287,9 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             {
                 imgout = plot.getFrame();
             }
-            else if (scenario == 2)
+            else if (scenario == 2 && systemInitialized && duckMeasurement)
             {
-                imgout = outputFrame;
+                imgout = plot.getFrame();
             }
             else if (scenario == 3)
             {

@@ -94,7 +94,7 @@ Scalar MeasurementDuckBundle::logLikelihoodTemplated(
     Scalar logLik = Scalar(0.0);
     const Scalar fx = Scalar(camera_.cameraMatrix.at<double>(0, 0));
     const Scalar fy = Scalar(camera_.cameraMatrix.at<double>(1, 1));
-    const Scalar duck_radius = Scalar(0.03);
+    const Scalar duck_radius = Scalar(0.0325);
     
     // Measurement noise models
     Eigen::MatrixX<Scalar> S_centroid = Scalar(sigma_c_) * Eigen::MatrixX<Scalar>::Identity(2, 2);
