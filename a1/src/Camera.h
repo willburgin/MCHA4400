@@ -73,7 +73,6 @@ struct Camera
     bool isVectorWithinFOV(const cv::Vec3d & rPCc) const;
 
     void calcFieldOfView();
-    void computePyramid();
     void write(cv::FileStorage &) const;                    // OpenCV serialisation
     void read(const cv::FileNode &);                        // OpenCV serialisation
 
@@ -88,7 +87,6 @@ private:
     double hFOV = 0.0;                                      // Horizonal field of view
     double vFOV = 0.0;                                      // Vertical field of view
     double dFOV = 0.0;                                      // Diagonal field of view
-    std::vector<cv::Vec3d> faceNormals;     
 };
 
 #include <cmath>
@@ -151,4 +149,3 @@ Eigen::Vector2<Scalar> Camera::vectorToPixel(const Eigen::Vector3<Scalar> & rPCc
 }
 
 #endif
-

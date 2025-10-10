@@ -86,6 +86,7 @@
 #include "Plot.h"
 #include "MeasurementSLAMUniqueTagBundle.h"
 #include "MeasurementSLAMDuckBundle.h"
+#include "MeasurementSLAMPointBundle.h"
 
 // Forward declarations
 static void hsv2rgb(const double & h, const double & s, const double & v, double & r, double & g, double & b);
@@ -584,6 +585,7 @@ void Plot::render()
     // Get association and visibility information from measurement
     const auto* measurementTagBundle = dynamic_cast<const MeasurementSLAMUniqueTagBundle*>(pMeasurement.get());
     const auto* measurementDuckBundle = dynamic_cast<const MeasurementDuckBundle*>(pMeasurement.get());
+    const auto* measurementPointBundle = dynamic_cast<const MeasurementPointBundle*>(pMeasurement.get());
     
     std::vector<int> associations;
     std::vector<bool> visibility;
@@ -606,6 +608,23 @@ void Plot::render()
             if (globalIdx < pSystem->numberLandmarks()) {
                 visibility[globalIdx] = true;
                 associations[globalIdx] = duckAssociations[j];
+            }
+        }
+    } else if (measurementPointBundle) {
+        // For points, associations and visibility need to be mapped from visible landmarks to global indices
+        const auto& visibleLandmarks = measurementPointBundle->getVisibleLandmarks();
+        const auto& pointAssociations = measurementPointBundle->getAssociations();
+        
+        // Initialize with all landmarks not visible and not associated
+        visibility.resize(pSystem->numberLandmarks(), false);
+        associations.resize(pSystem->numberLandmarks(), -1);
+        
+        // Map visible landmarks to global indices
+        for (size_t j = 0; j < visibleLandmarks.size(); ++j) {
+            size_t globalIdx = visibleLandmarks[j];
+            if (globalIdx < pSystem->numberLandmarks()) {
+                visibility[globalIdx] = true;
+                associations[globalIdx] = pointAssociations[j];
             }
         }
     }

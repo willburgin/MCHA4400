@@ -27,11 +27,20 @@ public:
     virtual GaussianInfo<double> predictFeatureBundleDensity(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) const override;
 
     virtual const std::vector<int> & associate(const SystemSLAM & system, const std::vector<std::size_t> & idxLandmarks) override;
+    template <typename Scalar>
+    Scalar logLikelihoodTemplated(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system) const;
+    
+    // Accessors for plotting
+    const std::vector<std::size_t>& getVisibleLandmarks() const { return visibleLandmarks_; }
+    const std::vector<int>& getAssociations() const { return idxFeatures_; }
+
 protected:
     virtual void update(SystemBase & system) override;
     Eigen::Matrix<double, 2, Eigen::Dynamic> Y_;    // Feature bundle
     double sigma_;                                  // Feature error standard deviation (in pixels)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
+    std::vector<std::size_t> visibleLandmarks_;     // Visible landmarks
+    std::vector<int> consecutiveFailures_;          // Track consecutive failures for each landmark
 };
 
 // Image feature location for a given landmark
@@ -74,6 +83,52 @@ Eigen::VectorX<Scalar> MeasurementPointBundle::predictFeatureBundle(const Eigen:
         // TODO: Lab 9
     }
     return h;
+}
+
+// Templated log-likelihood for autodiff support
+template <typename Scalar>
+Scalar MeasurementPointBundle::logLikelihoodTemplated(const Eigen::VectorX<Scalar> & x, const SystemSLAM & system) const
+{
+    const SystemSLAM & systemSLAM = dynamic_cast<const SystemSLAM &>(system);
+    
+    Scalar logLik = Scalar(0.0);
+    
+    // Count unassociated landmarks for penalty term
+    int numUnassociated = 0;
+    for (int assoc : idxFeatures_) {
+        if (assoc < 0) numUnassociated++;
+    }
+    
+    // Create measurement noise model
+    Eigen::MatrixX<Scalar> S = Scalar(sigma_) * Eigen::MatrixX<Scalar>::Identity(2, 2);
+    GaussianInfo<Scalar> measurementModel = GaussianInfo<Scalar>::fromSqrtMoment(S);
+    
+    // Sum log-likelihoods over all associated feature/landmark pairs
+    for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
+        if (idxFeatures_[j] >= 0) {  // This landmark is associated
+            int detectionIdx = idxFeatures_[j];
+            size_t landmarkIdx = visibleLandmarks_[j]; 
+            // Predict single point feature for this landmark
+            Eigen::Vector2<Scalar> h_pred = predictFeature(x, systemSLAM, landmarkIdx);
+            
+            // Get measured point position (always double)
+            Eigen::Vector2d y_i = Y_.col(detectionIdx);
+            
+            // Compute residual
+            Eigen::Vector2<Scalar> residual;
+            residual(0) = Scalar(y_i(0)) - h_pred(0);
+            residual(1) = Scalar(y_i(1)) - h_pred(1);
+            
+            // Add log-likelihood contribution
+            logLik += measurementModel.log(residual);
+        }
+    }
+    
+    // Add penalty term for unassociated visible landmarks
+    double imageArea = camera_.imageSize.width * camera_.imageSize.height;
+    logLik -= Scalar(numUnassociated * std::log(imageArea));
+    
+    return logLik;
 }
 
 #endif

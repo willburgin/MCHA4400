@@ -13,6 +13,7 @@
 #include "SystemSLAMPointLandmarks.h"
 #include "MeasurementSLAMUniqueTagBundle.h"
 #include "MeasurementSLAMDuckBundle.h"
+#include "MeasurementSLAMPointBundle.h"
 #include "Plot.h"
 #include "DuckDetectorONNX.h"
 
@@ -163,6 +164,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     // Scenario-specific measurement pointers
     std::unique_ptr<MeasurementSLAMUniqueTagBundle> tagMeasurement;
     std::unique_ptr<MeasurementDuckBundle> duckMeasurement;
+    std::unique_ptr<MeasurementPointBundle> pointMeasurement;
     
     bool systemInitialized = false;
     
@@ -299,10 +301,10 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 systemInitialized = true;
             }
             
-            // SLAM estimation loop - let the system grow dynamically
+            // SLAM estimation loop 
             
             // predict state forward in time
-            // create measurement with ALL detected ArUco data (even new markers)
+            // create measurement with ALL detected ArUco data 
             if (!result.markerIds.empty())
             {
                 int numMarkers = result.markerIds.size();
@@ -379,18 +381,21 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
 
                 Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
                 
-                initialCov.diagonal()(0) *= 0.4;  // vx
-                initialCov.diagonal()(1) *= 0.1;  // vy
-                initialCov.diagonal()(2) *= 0.1;  // vz
-                initialCov.diagonal()(3) *= 0.1;  // wx
-                initialCov.diagonal()(4) *= 0.1;  // wy
-                initialCov.diagonal()(5) *= 0.4;  // wz
-                initialCov.diagonal()(6) *= 0.005; // x
-                initialCov.diagonal()(7) *= 0.005; // y
-                initialCov.diagonal()(8) *= 0.005; // z
-                initialCov.diagonal()(9) *= 0.001; // roll
-                initialCov.diagonal()(10) *= 0.001; // pitch
-                initialCov.diagonal()(11) *= 0.001; // yaw
+                initialCov.diagonal()(0) *= 0.08;  // vx
+                initialCov.diagonal()(1) *= 0.08;  // vy  
+                initialCov.diagonal()(2) *= 0.08;  // vz
+                
+                initialCov.diagonal()(3) *= 0.09;  // wx
+                initialCov.diagonal()(4) *= 0.09;  // wy
+                initialCov.diagonal()(5) *= 0.1;  // wz
+                
+                initialCov.diagonal()(6) *= 0.01;  // x
+                initialCov.diagonal()(7) *= 0.01;  // y
+                initialCov.diagonal()(8) *= 0.01;  // z
+                
+                initialCov.diagonal()(9) *= 0.01;  // roll
+                initialCov.diagonal()(10) *= 0.01; // pitch
+                initialCov.diagonal()(11) *= 0.01; // yaw
                 
                 auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
                 system = std::make_unique<SystemSLAMPointLandmarks>(initialDensity);
@@ -435,7 +440,62 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         }
         else if (scenario == 3)
         {
-            outputFrame = detectAndDrawShiAndTomasi(imgin, 20);
+            auto result = detectAndDrawShiAndTomasi(imgin, 100);  // Detect up to 50 corner features
+            outputFrame = result.image;
+            
+            // Initialize system on first frame
+            if (!systemInitialized)
+            {
+                int stateDim = 12; // Only body states initially
+                Eigen::VectorXd initialMean = Eigen::VectorXd::Zero(stateDim);
+                initialMean(8) = -1.8;
+
+                Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
+                
+                // best solution so far - individual state scaling
+                initialCov.diagonal()(0) *= 0.3;  // vx
+                initialCov.diagonal()(1) *= 0.3;  // vy  
+                initialCov.diagonal()(2) *= 0.3;  // vz
+                
+                initialCov.diagonal()(3) *= 0.4;  // wx
+                initialCov.diagonal()(4) *= 0.4;  // wy
+                initialCov.diagonal()(5) *= 0.3;  // wz
+                
+                initialCov.diagonal()(6) *= 0.01;  // x
+                initialCov.diagonal()(7) *= 0.01;  // y
+                initialCov.diagonal()(8) *= 0.01;  // z
+                
+                initialCov.diagonal()(9) *= 0.01;  // roll
+                initialCov.diagonal()(10) *= 0.01; // pitch
+                initialCov.diagonal()(11) *= 0.01; // yaw
+                
+                auto initialDensity = GaussianInfo<double>::fromMoment(initialMean, initialCov);
+                system = std::make_unique<SystemSLAMPointLandmarks>(initialDensity);
+                systemInitialized = true;
+            }
+            
+            // Create measurement from point features
+            if (!result.points.empty())
+            {
+                int numPoints = result.points.size();
+                Eigen::Matrix<double, 2, Eigen::Dynamic> Y(2, numPoints);  // 2 rows: x, y
+                
+                for (int i = 0; i < numPoints; ++i)
+                {
+                    Y(0, i) = result.points[i].x;  // x coordinate
+                    Y(1, i) = result.points[i].y;  // y coordinate
+                }
+                
+                pointMeasurement = std::make_unique<MeasurementPointBundle>(time, Y, camera);
+                pointMeasurement->process(*system);
+            }
+            
+            // Update visualization
+            system->view() = outputFrame.clone();
+            if (pointMeasurement) {
+                plot.setData(*system, *pointMeasurement);
+                plot.render();
+            }
         }
         
         frameCount++;
@@ -460,9 +520,9 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
             {
                 imgout = plot.getFrame();
             }
-            else if (scenario == 3)
+            else if (scenario == 3 && systemInitialized && pointMeasurement)
             {
-                imgout = outputFrame;
+                imgout = plot.getFrame();
             }
             
             // Write frame if we have output

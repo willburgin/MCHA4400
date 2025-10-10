@@ -104,102 +104,46 @@ cv::Mat detectAndDrawHarris(const cv::Mat &img, int maxNumFeatures)
     return imgout;
 }
 
-cv::Mat detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
+ShiTomasiDetectionResult detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
 {
     cv::Mat imgout = img.clone();
     cv::Mat gray;
-    cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // Shi and Tomasi detector expects grayscale input.
-    cv::Mat dst; // Store eigenvalues computed by detector.
-    cv::cornerMinEigenVal(gray, dst, 5, 3); // img:output:neighbourhoodsize:aperture
-
-    float thresh = 0.009f; // Example absolute threshold
-
-    std::vector<std::pair<cv::Point, float>> corner_points; // Initialise vector for storing.
-    for (int i = 0; i < dst.rows; i++)
+    cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
+    
+    // Use OpenCV's goodFeaturesToTrack (Shi-Tomasi corner detector)
+    std::vector<cv::Point2f> corners;
+    double qualityLevel = 0.01;     // Quality level for corner detection
+    double minDistance = 10.0;      // Minimum distance between corners (built-in NMS)
+    int blockSize = 5;              // Size of averaging block
+    bool useHarrisDetector = false; // Use Shi-Tomasi (not Harris)
+    double k = 0.04;                // Harris parameter (not used when useHarrisDetector=false)
+    
+    cv::goodFeaturesToTrack(gray, corners, maxNumFeatures, qualityLevel, minDistance, 
+                           cv::noArray(), blockSize, useHarrisDetector, k);
+    
+    // Draw all detected corners in green
+    for (const auto &pt : corners)
     {
-        for (int j = 0; j < dst.cols; j++)
-        {
-            float eig = dst.at<float>(i, j);
-            if (eig > thresh)
-            {
-                corner_points.emplace_back(cv::Point(j, i), eig);
-            }
-        }
+        cv::circle(imgout, pt, 3, cv::Scalar(0, 255, 0), 1);
     }
     
-    // Sort by eigen values(descending).
-    std::sort(corner_points.begin(), corner_points.end(), [](const auto &a, const auto &b)
+    // Draw labeled corners in red
+    for (size_t i = 0; i < corners.size(); ++i)
     {
-        return a.second > b.second; // Second element in corner_points
-    });
-    
-    // APPLY NON-MAXIMUM SUPPRESSION to corner_points
-    int suppressionRadius = 10; // Minimum distance between corners
-    std::vector<std::pair<cv::Point, float>> suppressed_points;
-    
-    for (const auto &[candidate_pt, candidate_eig] : corner_points)
-    {
-        bool suppress = false;
-        for (const auto &[accepted_pt, accepted_eig] : suppressed_points)
-        {
-            double distance = cv::norm(candidate_pt - accepted_pt);
-            if (distance < suppressionRadius)
-            {
-                suppress = true;
-                break;
-            }
-        }
-        if (!suppress)
-        {
-            suppressed_points.emplace_back(candidate_pt, candidate_eig);
-        }
-    }
-    
-    corner_points = suppressed_points; // Replace with suppressed results
-    // END SUPPRESSION
-    
-    // Draw all detected corners (now suppressed) in green
-    for (const auto &[pt, eig] : corner_points)
-    {
-        cv::circle(imgout, pt, 3, cv::Scalar(0, 255, 0), 1); // Green in BGR
-    }
-    
-    std::println("Image width: {}", img.cols);
-    std::println("Image height: {}", img.rows);
-    std::println("Features requested: {}", maxNumFeatures);
-    std::println("Features detected: {}", corner_points.size());
-    std::println("{:<5} {:<10} {:<10} {:<10}", "Index", "X", "Y", "Eigenvalue");
-    
-    // Limit to maxNumFeatures.
-    if (corner_points.size() > static_cast<float>(maxNumFeatures))
-    {
-        corner_points.resize(maxNumFeatures);
-    }
-    
-    // Print each feature
-    for (size_t i = 0; i < corner_points.size(); ++i)
-    {
-        const auto &[pt, eig] = corner_points[i];
-        std::println("{:<5} {:<10} {:<10} {:.8f}", i + 1, pt.x, pt.y, eig);
-    }
-    
-    // Draw on output image
-    for (size_t i = 0; i < corner_points.size(); ++i)
-    {
-        const auto &[pt, eig] = corner_points[i];
-        // Draw a red circle at the feature
-        cv::circle(imgout, pt, 4, cv::Scalar(0, 0, 255), 1);
-        // Label the feature with its index number
+        cv::circle(imgout, corners[i], 4, cv::Scalar(0, 0, 255), 1);
         std::string label = std::to_string(i + 1);
         cv::putText(imgout, label,
-                   pt + cv::Point(5, -5), // offset text position
+                   corners[i] + cv::Point2f(5, -5),
                    cv::FONT_HERSHEY_SIMPLEX,
-                   0.9, // font scale
-                   cv::Scalar(255, 0, 0), // green text
-                   2); // thickness
+                   0.9,
+                   cv::Scalar(255, 0, 0),
+                   2);
     }
     
-    return imgout;
+    // Create dummy scores (goodFeaturesToTrack doesn't return quality scores directly)
+    std::vector<float> scores(corners.size(), 1.0f);
+    
+    return {imgout, corners, scores};
 }
 
 cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)

@@ -360,56 +360,6 @@ void Camera::printCalibration() const
     std::println("{:>30} {} deg", "Field of view (diagonal):", 180.0/CV_PI*dFOV);
 }
 
-void Camera::computePyramid()
-{
-    // Get image params
-    const double height = static_cast<double>(imageSize.height);
-    const double width = static_cast<double>(imageSize.width);
-    const double cx = cameraMatrix.at<double>(0, 2);
-    const double cy = cameraMatrix.at<double>(1, 2);
-
-    // Margins in pixels to adjust FOV
-    // Negative values shrink FOV inward, positive values extend it outward
-    double verticalMargin = -50.0;    // Reduce vertical FOV by 50 pixels top and bottom
-    double horizontalMargin = 0.0;    // Keep horizontal at image edges
-
-    // Define frustum bounds in pixel coordinates
-    double lowerBound = height - 0.5 + verticalMargin;
-    double upperBound = -0.5 - verticalMargin;
-    double rightBound = width - 0.5 + horizontalMargin;
-    double leftBound = -0.5 - horizontalMargin;
-
-    // Define optical axis from principal point
-    cv::Vec3d opticalAxis = pixelToVector(cv::Vec2d(cx, cy));
-
-    // Define corner rays
-    cv::Vec3d topLeft = pixelToVector(cv::Vec2d(leftBound, upperBound));
-    cv::Vec3d topRight = pixelToVector(cv::Vec2d(rightBound, upperBound));
-    cv::Vec3d bottomLeft = pixelToVector(cv::Vec2d(leftBound, lowerBound));
-    cv::Vec3d bottomRight = pixelToVector(cv::Vec2d(rightBound, lowerBound));
-
-    // Helper lambda to compute face normal
-    auto face = [&](const cv::Vec3d & a, const cv::Vec3d & b) {
-        cv::Vec3d normal = a.cross(b);
-        // Orient normal toward camera's optical axis
-        if (normal.dot(opticalAxis) < 0) {
-            normal = -normal;
-        }
-        double norm = cv::norm(normal);
-        if (norm < std::numeric_limits<double>::epsilon()) {
-            return cv::Vec3d(0, 0, 1);  // Fallback to forward direction
-        }
-        return normal / norm;
-    };
-
-    // Compute face normals (in order: top, right, bottom, left)
-    faceNormals.resize(4);
-    faceNormals[0] = face(topLeft, topRight);      // Top face
-    faceNormals[1] = face(topRight, bottomRight);  // Right face
-    faceNormals[2] = face(bottomRight, bottomLeft);// Bottom face
-    faceNormals[3] = face(bottomLeft, topLeft);    // Left face
-}
-
 void Camera::calcFieldOfView()
 {
     assert(cameraMatrix.rows == 3);
@@ -430,7 +380,7 @@ void Camera::calcFieldOfView()
 
     double angle_left = std::atan2(u_left[0], u_left[2]);
     double angle_right = std::atan2(u_right[0], u_right[2]);
-    hFOV = std::abs(angle_right - angle_left);
+    hFOV = std::abs(angle_right - angle_left);  // total horizontal FOV
 
     // Vertical FOV from center to top and bottom
     cv::Vec2d top_pixel(width / 2.0, 0);
@@ -442,7 +392,7 @@ void Camera::calcFieldOfView()
     double angle_bottom = std::atan2(u_bottom[1], u_bottom[2]);
     vFOV = std::abs(angle_bottom - angle_top);
 
-    // Diagonal
+    // Diagonal (for info only, same fix as above)
     cv::Vec2d top_left(0, 0);
     cv::Vec2d bottom_right(width - 1, height - 1);
     cv::Vec3d u_tl = pixelToVector(top_left);
@@ -450,10 +400,7 @@ void Camera::calcFieldOfView()
 
     double angle_tl = std::atan2(std::sqrt(u_tl[0]*u_tl[0] + u_tl[1]*u_tl[1]), u_tl[2]);
     double angle_br = std::atan2(std::sqrt(u_br[0]*u_br[0] + u_br[1]*u_br[1]), u_br[2]);
-    dFOV = std::abs(angle_br + angle_tl);
-    
-    // Compute frustum pyramid for FOV checks
-    computePyramid();
+    dFOV = std::abs(angle_br + angle_tl);  // total diagonal FOV
 }
 
 cv::Vec3d Camera::worldToVector(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
@@ -600,19 +547,22 @@ cv::Vec3d Camera::pixelToVector(const cv::Vec2d & rQOi) const
 
 bool Camera::isVectorWithinFOV(const cv::Vec3d & rPCc) const
 {
-    // Check if rPCc is behind the camera
-    if (rPCc[2] <= 0) {
-        return false;
-    }
+    // Normalize the input vector
+    cv::Vec3d uPCc = rPCc / cv::norm(rPCc);
 
-    // Check against all four frustum faces
-    for (const auto& normal : faceNormals) {
-        if (normal.dot(rPCc) < 0) {
-            return false;  // Outside this face
-        }
-    }
+    // The camera looks along +Z, so the central (optical) axis is (0, 0, 1)
+    const cv::Vec3d optical_axis(0.0, 0.0, 1.0);
+
+    // Compute the angle between the ray and the optical axis
+    double cos_angle = uPCc.dot(optical_axis);  // = cos(theta)
     
-    return true;  // Inside all faces
+    // Clamp to avoid numerical errors slightly exceeding [-1, 1]
+    cos_angle = std::clamp(cos_angle, -1.0, 1.0);
+
+    double angle = std::acos(cos_angle);  // radians
+
+    // Use the diagonal FOV for a symmetric cone check
+    return angle <= dFOV / 2.0;
 }
 
 bool Camera::isWorldWithinFOV(const cv::Vec3d & rPNn, const Pose<double> & Tnb) const
@@ -646,4 +596,3 @@ void Camera::read(const cv::FileNode & node)
     assert(distCoeffs.cols == 1);
     assert(distCoeffs.type() == CV_64F);
 }
-

@@ -25,7 +25,7 @@ MeasurementDuckBundle::MeasurementDuckBundle(double time, const Eigen::Matrix<do
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
     // updateMethod_ = UpdateMethod::SR1TRUSTEIG;
-    // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;
+    // updateMethod_ =UpdateMethod::NEWTONTRUSTEIG;
 }
 
 MeasurementSLAM * MeasurementDuckBundle::clone() const
@@ -152,7 +152,6 @@ void MeasurementDuckBundle::update(SystemBase & system)
     }
     
     // Loop over all detected ducks and initialize new landmarks
-    // Loop over all detected ducks and initialize new landmarks
     for (std::size_t detectionIdx = 0; detectionIdx < Y_.cols(); ++detectionIdx)
     {
         double area_pixels = Y_(2, detectionIdx);
@@ -164,7 +163,7 @@ void MeasurementDuckBundle::update(SystemBase & system)
         {
             Eigen::Vector2d centroid_pixel = Y_.block<2, 1>(0, detectionIdx);
             
-            // CHECK 1: is detection too close to image border?
+            // is detection too close to image border?
             double borderMargin = 100.0;  // pixels
             bool tooCloseToEdge = (centroid_pixel(0) < borderMargin || 
                                 centroid_pixel(0) > camera_.imageSize.width - borderMargin ||
@@ -175,12 +174,12 @@ void MeasurementDuckBundle::update(SystemBase & system)
                 continue;
             }
             
-            // CHECK 2: Area filter
+            // Area filter
             if (!(area_pixels >= 3000 || !hasSmallDucks)) {
                 continue;
             }
             
-            // CHECK 3: Find minimum distance to existing landmarks
+            // Find minimum distance to existing landmarks
             double minDistanceToExisting = std::numeric_limits<double>::max();
             
             for (size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
@@ -197,8 +196,8 @@ void MeasurementDuckBundle::update(SystemBase & system)
                 }
             }
             
-            // CHECK 4: Must be far enough from existing landmarks
-            double minSeparation = 150.0;  // pixels - tune this value
+            // must be far enough from existing landmarks
+            double minSeparation = 200.0;  // pixels 
             if (minDistanceToExisting < minSeparation) {
                 continue;  // Too close to an existing landmark
             }
@@ -236,18 +235,8 @@ void MeasurementDuckBundle::update(SystemBase & system)
             idxFeatures_.push_back(static_cast<int>(detectionIdx));
         }
     }
-    
-    std::cout << "=== BEFORE Measurement::update() ===" << std::endl;
-    Eigen::VectorXd x_before = systemSLAM.density.mean();
-    std::cout << "  Camera position before: " << x_before.segment<3>(6).transpose() << std::endl;
-    
     // Measurement update
     Measurement::update(system);
-    
-    Eigen::VectorXd x_after = systemSLAM.density.mean();
-    std::cout << "=== AFTER Measurement::update() ===" << std::endl;
-    std::cout << "  Camera position after: " << x_after.segment<3>(6).transpose() << std::endl;
-    std::cout << "  Position change: " << (x_after.segment<3>(6) - x_before.segment<3>(6)).norm() << std::endl;
 }
 
 // Image feature location for a given landmark and Jacobian
