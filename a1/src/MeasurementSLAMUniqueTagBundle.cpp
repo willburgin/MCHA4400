@@ -187,6 +187,11 @@ void MeasurementSLAMUniqueTagBundle::update(SystemBase & system)
                 GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
             
             systemSLAM.density *= newLandmarkDensity;
+            
+            // add newly initialized landmark to idxFeatures_ and mark as visible
+            size_t newLandmarkIdx = systemSLAM.numberLandmarks() - 1;
+            idxFeatures_.push_back(static_cast<int>(detectionIdx));
+            visibleLandmarks_.push_back(true);  
         }
     }
     

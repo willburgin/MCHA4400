@@ -610,25 +610,10 @@ void Plot::render()
         }
     }
 
-    // Resize tracking vector if needed, marking new landmarks as updated
-    if (landmarkHasBeenUpdated_.size() < pSystem->numberLandmarks()) {
-        landmarkHasBeenUpdated_.resize(pSystem->numberLandmarks(), true);  // New landmarks default to true
-    }
-
     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)
     {
         bool isVisible = (i < visibility.size()) ? visibility[i] : false;
         bool isAssociated = (i < associations.size() && associations[i] >= 0);
-        
-        // Mark landmark as updated if it's associated this frame
-        if (isVisible || isAssociated) {
-            landmarkHasBeenUpdated_[i] = true;
-        }
-        
-        // Skip plotting landmarks that haven't been updated yet
-        if (!landmarkHasBeenUpdated_[i]) {
-            continue;
-        }
         
         // Determine color based on visibility and association status
         if (isVisible && isAssociated) {

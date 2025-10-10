@@ -20,7 +20,7 @@ MeasurementDuckBundle::MeasurementDuckBundle(double time, const Eigen::Matrix<do
     : MeasurementSLAM(time, camera)
     , Y_(Y)
     , sigma_c_(20.0) // TODO: Assignment(s)
-    , sigma_a_(50.0) // TODO: Assignment(s)
+    , sigma_a_(200.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
@@ -152,6 +152,7 @@ void MeasurementDuckBundle::update(SystemBase & system)
     }
     
     // Loop over all detected ducks and initialize new landmarks
+    // Loop over all detected ducks and initialize new landmarks
     for (std::size_t detectionIdx = 0; detectionIdx < Y_.cols(); ++detectionIdx)
     {
         double area_pixels = Y_(2, detectionIdx);
@@ -163,7 +164,7 @@ void MeasurementDuckBundle::update(SystemBase & system)
         {
             Eigen::Vector2d centroid_pixel = Y_.block<2, 1>(0, detectionIdx);
             
-            // is detection too close to image border?
+            // CHECK 1: is detection too close to image border?
             double borderMargin = 100.0;  // pixels
             bool tooCloseToEdge = (centroid_pixel(0) < borderMargin || 
                                 centroid_pixel(0) > camera_.imageSize.width - borderMargin ||
@@ -171,60 +172,68 @@ void MeasurementDuckBundle::update(SystemBase & system)
                                 centroid_pixel(1) > camera_.imageSize.height - borderMargin);
             
             if (tooCloseToEdge) {
-                continue;  // skip this detection
+                continue;
             }
             
-            // is this detection within 4-sigma confidence region of existing landmarks?
-            bool withinConfidenceRegion = false;
+            // CHECK 2: Area filter
+            if (!(area_pixels >= 3000 || !hasSmallDucks)) {
+                continue;
+            }
+            
+            // CHECK 3: Find minimum distance to existing landmarks
+            double minDistanceToExisting = std::numeric_limits<double>::max();
             
             for (size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
-                // get predicted feature density for this landmark (2D in pixel space)
-                GaussianInfo<double> featureDensity = predictFeatureDensity(systemSLAM, i);
+                // Get predicted pixel location of existing landmark
+                std::size_t idx = systemSLAM.landmarkPositionIndex(i);
+                Eigen::Vector3d rJNn = x.segment<3>(idx);
+                Eigen::Vector3d rJCc = Rnc.transpose() * (rJNn - rCNn);
                 
-                // check if detection is within 4-sigma confidence region
-                double nSigma = 4.0;
-                if (featureDensity.isWithinConfidenceRegion(centroid_pixel, nSigma)) {
-                    withinConfidenceRegion = true;
-                    break;
+                // Only consider landmarks in front of camera
+                if (rJCc(2) > 0) {
+                    Eigen::Vector2d projected_pixel = camera_.vectorToPixel(rJCc);
+                    double distance = (projected_pixel - centroid_pixel).norm();
+                    minDistanceToExisting = std::min(minDistanceToExisting, distance);
                 }
             }
             
-            if (!withinConfidenceRegion) {                    
-                // Initialize if: (small duck) OR (no small ducks exist in frame)
-                if (area_pixels >= 3000 || !hasSmallDucks) {
-                    double duck_radius = 0.0325;
-                    double fx = camera_.cameraMatrix.at<double>(0, 0);
-                    double fy = camera_.cameraMatrix.at<double>(1, 1);
-                    
-                    double estimated_depth = std::sqrt((fx * fy * duck_radius * duck_radius) / area_pixels);
-                    estimated_depth = std::clamp(estimated_depth, 0.1, 10.0);
-                    std::cout << "  Estimated Depth " << estimated_depth << std::endl;
-
-                    // Backproject centroid to 3D at estimated depth
-                    cv::Vec2d centroid_cv(centroid_pixel(0), centroid_pixel(1));
-                    cv::Vec3d rJCc_cv = camera_.pixelToVector(centroid_cv);
-                    Eigen::Vector3d rJCc_unit(rJCc_cv[0], rJCc_cv[1], rJCc_cv[2]);
-                    Eigen::Vector3d rJCc = rJCc_unit.normalized() * estimated_depth;
-                    
-                    // Transform to world frame
-                    Eigen::Vector3d rJNn = Rnc * rJCc + rCNn;
-                    
-                    // Create new landmark with prior
-                    Eigen::VectorXd mu_new = rJNn;
-                    // double epsilon = 50.0;
-                    double epsilon = 5.0;
-                    Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(3, 3);
-                    Eigen::VectorXd nu_new = Xi_new * mu_new;
-                    
-                    GaussianInfo<double> newLandmarkDensity = GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
-                    systemSLAM.density *= newLandmarkDensity;
-                    landmarksInitializedThisFrame++;
-
-                    size_t newLandmarkIdx = systemSLAM.numberLandmarks() - 1;
-                    visibleLandmarks_.push_back(newLandmarkIdx);
-                    idxFeatures_.push_back(static_cast<int>(detectionIdx));
-                }
+            // CHECK 4: Must be far enough from existing landmarks
+            double minSeparation = 150.0;  // pixels - tune this value
+            if (minDistanceToExisting < minSeparation) {
+                continue;  // Too close to an existing landmark
             }
+            
+            // All checks passed - initialize this landmark
+            double duck_radius = 0.0325;
+            double fx = camera_.cameraMatrix.at<double>(0, 0);
+            double fy = camera_.cameraMatrix.at<double>(1, 1);
+            
+            double estimated_depth = std::sqrt((fx * fy * duck_radius * duck_radius) / area_pixels);
+            estimated_depth = std::clamp(estimated_depth, 0.1, 10.0);
+            std::cout << "  Estimated Depth " << estimated_depth << std::endl;
+
+            // Backproject centroid to 3D at estimated depth
+            cv::Vec2d centroid_cv(centroid_pixel(0), centroid_pixel(1));
+            cv::Vec3d rJCc_cv = camera_.pixelToVector(centroid_cv);
+            Eigen::Vector3d rJCc_unit(rJCc_cv[0], rJCc_cv[1], rJCc_cv[2]);
+            Eigen::Vector3d rJCc = rJCc_unit.normalized() * estimated_depth;
+            
+            // Transform to world frame
+            Eigen::Vector3d rJNn = Rnc * rJCc + rCNn;
+            
+            // Create new landmark with prior
+            Eigen::VectorXd mu_new = rJNn;
+            double epsilon = 5.0;
+            Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(3, 3);
+            Eigen::VectorXd nu_new = Xi_new * mu_new;
+            
+            GaussianInfo<double> newLandmarkDensity = GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
+            systemSLAM.density *= newLandmarkDensity;
+            landmarksInitializedThisFrame++;
+
+            size_t newLandmarkIdx = systemSLAM.numberLandmarks() - 1;
+            visibleLandmarks_.push_back(newLandmarkIdx);
+            idxFeatures_.push_back(static_cast<int>(detectionIdx));
         }
     }
     

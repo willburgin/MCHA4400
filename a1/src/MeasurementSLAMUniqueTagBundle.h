@@ -72,7 +72,7 @@ Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
     };
 
     // Predict pixel coordinates for all 4 corners
-    Eigen::Matrix<Scalar, 8, 1> h; // 4 corners × 2 coordinates = 8 values (
+    Eigen::Matrix<Scalar, 8, 1> h; // 4 corners × 2 coordinates = 8 values
     
     for (int j = 0; j < 4; ++j)
     {
@@ -83,7 +83,7 @@ Eigen::Matrix<Scalar, 8, 1> MeasurementSLAMUniqueTagBundle::predictFeature(const
         Eigen::Vector3<Scalar> rJcCn = Tnc.rotationMatrix.transpose() * (rJcNn - Tnc.translationVector);
         
         // Project to pixels
-        Eigen::Vector2<Scalar> rQOi = camera_.vectorToPixel(rJcCn); // position vector from image origin to corner j of landmark i
+        Eigen::Vector2<Scalar> rQOi = camera_.vectorToPixel(rJcCn); 
         
         // Store in output vector
         h.template segment<2>(2*j) = rQOi;
@@ -123,8 +123,7 @@ Scalar MeasurementSLAMUniqueTagBundle::logLikelihoodTemplated(const Eigen::Vecto
         if (assoc < 0) numUnassociated++;
     }
     
-    // Create measurement noise model: N(0, σ²I) for a single corner
-    // We'll evaluate the measurement at the predicted location
+    // Create measurement noise model
     Eigen::MatrixX<Scalar> S = Scalar(sigma_) * Eigen::MatrixX<Scalar>::Identity(2, 2);
     GaussianInfo<Scalar> measurementModel = GaussianInfo<Scalar>::fromSqrtMoment(S);
     
@@ -143,21 +142,17 @@ Scalar MeasurementSLAMUniqueTagBundle::logLikelihoodTemplated(const Eigen::Vecto
                 
                 // Get predicted corner position
                 Eigen::Vector2<Scalar> h_ic = h_pred.template segment<2>(2*c);
-                
-                // Measurement model: y ~ N(h, σ²I)
-                // This is equivalent to: (y - h) ~ N(0, σ²I)
-                // Use GaussianInfo log function: log p(y - h | N(0, σ²I))
                 Eigen::Vector2<Scalar> residual;
                 residual(0) = Scalar(y_ic(0)) - h_ic(0);
                 residual(1) = Scalar(y_ic(1)) - h_ic(1);
                 
-                // Use tested GaussianInfo log function
+                // Use our tested GaussianInfo log function
                 logLik += measurementModel.log(residual);
             }
         }
     }
     
-    // Add penalty term for unassociated visible landmarks
+    // Add penalty term for unassociated visible landmarks (not critical for this scenario)
     double imageArea = camera_.imageSize.width * camera_.imageSize.height;
     logLik -= Scalar(4.0 * numUnassociated * std::log(imageArea));
     

@@ -8,7 +8,6 @@
 cv::Mat detectAndDrawHarris(const cv::Mat &img, int maxNumFeatures)
 {
     cv::Mat imgout = img.clone();
-    // TODO
     cv::Mat gray;
     cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // Harris detector expects grayscale input.
     cv::Mat dst; // Store scores computed by harris detector.
@@ -86,7 +85,7 @@ cv::Mat detectAndDrawHarris(const cv::Mat &img, int maxNumFeatures)
         std::println("{:<5} {:<10} {:<10} {:.8f}", i + 1, pt.x, pt.y, score);
     }
     
-    // TODO: Draw on output image
+    // Draw on output image
     for (size_t i = 0; i < corner_points.size(); ++i)
     {
         const auto &[pt, score] = corner_points[i];
@@ -108,7 +107,6 @@ cv::Mat detectAndDrawHarris(const cv::Mat &img, int maxNumFeatures)
 cv::Mat detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
 {
     cv::Mat imgout = img.clone();
-    // TODO
     cv::Mat gray;
     cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // Shi and Tomasi detector expects grayscale input.
     cv::Mat dst; // Store eigenvalues computed by detector.
@@ -185,7 +183,7 @@ cv::Mat detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
         std::println("{:<5} {:<10} {:<10} {:.8f}", i + 1, pt.x, pt.y, eig);
     }
     
-    // TODO: Draw on output image
+    // Draw on output image
     for (size_t i = 0; i < corner_points.size(); ++i)
     {
         const auto &[pt, eig] = corner_points[i];
@@ -207,7 +205,6 @@ cv::Mat detectAndDrawShiAndTomasi(const cv::Mat &img, int maxNumFeatures)
 cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
 {
     cv::Mat imgout = img.clone();
-    // TODO
     cv::Mat gray;
     cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // FAST detector expects grayscale input.
     std::vector<cv::KeyPoint> keypoints; // Store keypoints computed by FAST detector.
@@ -285,8 +282,6 @@ cv::Mat detectAndDrawFAST(const cv::Mat &img, int maxNumFeatures)
 ArucoDetectionResult detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
 {
     cv::Mat imgout = img.clone();
-
-    // TODO
     cv::Mat gray;
     cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY); // Aruco detector expects grayscale input.
 
@@ -299,10 +294,6 @@ ArucoDetectionResult detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
     cv::aruco::ArucoDetector detector(dictionary, detectorParams);
 
     detector.detectMarkers(gray, markerCorners, markerIds, rejectedCandidates);
-    // std::println("Image width: {}", img.cols);
-    // std::println("Image height: {}", img.rows);
-    // std::println("Markers {}",   markerCorners.size());
-    // std::println("{:<5} {:<10} {:<10}", "ID", "X", "Y");
 
     // Combine markerIds and markerCorners together and sort by ID
     std::vector<std::pair<int, std::vector<cv::Point2f>>> sortedMarkers;
@@ -318,13 +309,6 @@ ArucoDetectionResult detectAndDrawArUco(const cv::Mat &img, int maxNumFeatures)
     // Then iterate through sorted markers
     for (const auto& [id, corners] : sortedMarkers)
     {
-        // std::println("ID: {:<5} with corners: ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f}) ({:.0f},{:.0f})",
-        //     id,
-        //     corners[0].x, corners[0].y,
-        //     corners[1].x, corners[1].y,
-        //     corners[2].x, corners[2].y,
-        //     corners[3].x, corners[3].y);
-
         // Draw green circles at all 4 corners
         for (const auto& pt : corners) {
             cv::circle(imgout, pt, 3, cv::Scalar(0, 255, 0), 1);

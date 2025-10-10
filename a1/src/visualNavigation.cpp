@@ -1,6 +1,8 @@
 #include <filesystem>
 #include <string>
 #include <iostream>
+#include <fstream>
+#include <vector>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/opencv.hpp>
 #include "BufferedVideo.h"
@@ -13,6 +15,98 @@
 #include "MeasurementSLAMDuckBundle.h"
 #include "Plot.h"
 #include "DuckDetectorONNX.h"
+
+// Structure to hold cached duck detections for a single frame
+struct CachedDuckDetections
+{
+    std::vector<cv::Point2f> centroids;
+    std::vector<int> areas;
+};
+
+// Save duck detections to file
+void saveDuckDetectionsToFile(const std::filesystem::path& cachePath, 
+                               const std::vector<CachedDuckDetections>& allDetections)
+{
+    std::ofstream file(cachePath, std::ios::binary);
+    if (!file.is_open())
+    {
+        std::cerr << "Failed to open cache file for writing: " << cachePath << std::endl;
+        return;
+    }
+    
+    // Write number of frames
+    size_t numFrames = allDetections.size();
+    file.write(reinterpret_cast<const char*>(&numFrames), sizeof(numFrames));
+    
+    // Write each frame's detections
+    for (const auto& frameDetections : allDetections)
+    {
+        // Write number of detections in this frame
+        size_t numDetections = frameDetections.centroids.size();
+        file.write(reinterpret_cast<const char*>(&numDetections), sizeof(numDetections));
+        
+        // Write centroids
+        for (const auto& centroid : frameDetections.centroids)
+        {
+            file.write(reinterpret_cast<const char*>(&centroid.x), sizeof(centroid.x));
+            file.write(reinterpret_cast<const char*>(&centroid.y), sizeof(centroid.y));
+        }
+        
+        // Write areas
+        for (const auto& area : frameDetections.areas)
+        {
+            file.write(reinterpret_cast<const char*>(&area), sizeof(area));
+        }
+    }
+    
+    file.close();
+    std::cout << "Saved duck detections cache to: " << cachePath << std::endl;
+}
+
+// Load duck detections from file
+bool loadDuckDetectionsFromFile(const std::filesystem::path& cachePath,
+                                std::vector<CachedDuckDetections>& allDetections)
+{
+    std::ifstream file(cachePath, std::ios::binary);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    
+    // Read number of frames
+    size_t numFrames;
+    file.read(reinterpret_cast<char*>(&numFrames), sizeof(numFrames));
+    allDetections.resize(numFrames);
+    
+    // Read each frame's detections
+    for (auto& frameDetections : allDetections)
+    {
+        // Read number of detections in this frame
+        size_t numDetections;
+        file.read(reinterpret_cast<char*>(&numDetections), sizeof(numDetections));
+        
+        frameDetections.centroids.resize(numDetections);
+        frameDetections.areas.resize(numDetections);
+        
+        // Read centroids
+        for (auto& centroid : frameDetections.centroids)
+        {
+            file.read(reinterpret_cast<char*>(&centroid.x), sizeof(centroid.x));
+            file.read(reinterpret_cast<char*>(&centroid.y), sizeof(centroid.y));
+        }
+        
+        // Read areas
+        for (auto& area : frameDetections.areas)
+        {
+            file.read(reinterpret_cast<char*>(&area), sizeof(area));
+        }
+    }
+    
+    file.close();
+    std::cout << "Loaded duck detections cache from: " << cachePath << std::endl;
+    std::cout << "Total frames in cache: " << numFrames << std::endl;
+    return true;
+}
 
 void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const std::filesystem::path & cameraPath, int scenario, int interactive, const std::filesystem::path & outputDirectory)
 {
@@ -62,6 +156,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     cv::VideoWriter videoOut;
     BufferedVideoWriter bufferedVideoWriter(3);
     bool videoWriterOpened = false;
+    
     // SLAM system initialization (base class pointer works here)
     std::unique_ptr<SystemSLAM> system;
     
@@ -74,11 +169,70 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     // Duck detector initialization for scenario 2
     std::unique_ptr<DuckDetectorONNX> duckDetector;
     std::filesystem::path outputImageDirectory;
+    std::vector<CachedDuckDetections> cachedDetections;
+    bool useCachedDetections = false;
+    
     if (scenario == 2)
     {
-        std::filesystem::path modelPath = "../data/duck_with_postprocessing.onnx";
-        duckDetector = std::make_unique<DuckDetectorONNX>(modelPath.string());
-        std::cout << "Duck detector initialized with model: " << modelPath << std::endl;
+        // Define cache file path
+        std::filesystem::path cacheDirectory = "../data";
+        std::string cacheFilename = videoPath.stem().string() + "_duck_detections.bin";
+        std::filesystem::path cachePath = cacheDirectory / cacheFilename;
+        
+        // Try to load cached detections
+        if (std::filesystem::exists(cachePath))
+        {
+            std::cout << "Found cached duck detections file." << std::endl;
+            if (loadDuckDetectionsFromFile(cachePath, cachedDetections))
+            {
+                useCachedDetections = true;
+                std::cout << "Using cached duck detections (performance optimized)." << std::endl;
+            }
+            else
+            {
+                std::cerr << "Failed to load cache file. Will run detector online." << std::endl;
+            }
+        }
+        
+        // If no cache exists or loading failed, run detector and create cache
+        if (!useCachedDetections)
+        {
+            std::cout << "No cache found. Running duck detector offline to create cache..." << std::endl;
+            
+            std::filesystem::path modelPath = "../data/duck_with_postprocessing.onnx";
+            duckDetector = std::make_unique<DuckDetectorONNX>(modelPath.string());
+            
+            // Run detector on all frames and cache results
+            cv::VideoCapture tempCap(videoPath.string());
+            cachedDetections.reserve(nFrames);
+            
+            int frameIdx = 0;
+            while (true)
+            {
+                cv::Mat frame;
+                tempCap >> frame;
+                if (frame.empty()) break;
+                
+                std::cout << "\rProcessing frame " << (frameIdx + 1) << "/" << nFrames << std::flush;
+                
+                auto detections = duckDetector->detect(frame);
+                CachedDuckDetections frameCache;
+                frameCache.centroids = detections.centroids;
+                frameCache.areas = detections.areas;
+                cachedDetections.push_back(frameCache);
+                
+                frameIdx++;
+            }
+            std::cout << std::endl;
+            
+            tempCap.release();
+            
+            // Save cache to file
+            saveDuckDetectionsToFile(cachePath, cachedDetections);
+            useCachedDetections = true;
+            
+            std::cout << "Duck detection cache created successfully." << std::endl;
+        }
         
         // Create images subdirectory for scenario 2
         if (doExport)
@@ -96,7 +250,6 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
 
     // track frame number for interactive mode
     static int frameCount = 0;
-
 
     while (true)
     {
@@ -178,14 +331,44 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
         }
         else if (scenario == 2)
         {
-            // Run duck detector
             std::string baseName = videoPath.stem().string();
             std::string frameName = baseName + "_" + std::to_string(frameCount);
-            std::cout << "Processing " << frameName << "..." << std::flush;
             
-            auto detections = duckDetector->detect(imgin);
-            outputFrame = detections.image;  // Annotated image from DuckDetectionResult struct
-            std::cout << " done" << std::endl;
+            // Get detections from cache
+            std::vector<cv::Point2f> centroids;
+            std::vector<int> areas;
+            
+            if (useCachedDetections && frameCount < cachedDetections.size())
+            {
+                centroids = cachedDetections[frameCount].centroids;
+                areas = cachedDetections[frameCount].areas;
+                std::cout << "Using cached detections for " << frameName 
+                          << " (" << centroids.size() << " ducks)" << std::endl;
+            }
+            
+            // Create visualization (optional - you can skip this for pure performance)
+            imgin.convertTo(outputFrame, CV_8UC3, 0.5, 0); // Darken the image
+            
+            // Draw detections on output frame
+            for (size_t i = 0; i < centroids.size(); ++i)
+            {
+                cv::Point center(cvRound(centroids[i].x), cvRound(centroids[i].y));
+                
+                // Draw black X at centroid
+                int len = 3;
+                cv::line(outputFrame, center - cv::Point(len, len), center + cv::Point(len, len), cv::Scalar(0, 0, 0), 2);
+                cv::line(outputFrame, center - cv::Point(-len, len), center + cv::Point(-len, len), cv::Scalar(0, 0, 0), 2);
+                
+                // Overlay info
+                std::string text = "ID=" + std::to_string(i) +
+                                " (" + std::to_string(cvRound(centroids[i].x)) +
+                                "," + std::to_string(cvRound(centroids[i].y)) +
+                                ") A=" + std::to_string(areas[i]);
+                
+                cv::putText(outputFrame, text, center + cv::Point(6, -6),
+                           cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1,
+                           cv::LINE_AA);
+            }
             
             // Initialize system on first frame
             if (!systemInitialized)
@@ -195,21 +378,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 initialMean(8) = -1.0;
 
                 Eigen::MatrixXd initialCov = Eigen::MatrixXd::Identity(stateDim, stateDim);
-                // // Scale initial uncertainties
-                // initialCov.diagonal()(0) *= 0.01;  // vx
-                // initialCov.diagonal()(1) *= 0.01;  // vy
-                // initialCov.diagonal()(2) *= 0.01;  // vz
-                // initialCov.diagonal()(3) *= 0.3;  // wx
-                // initialCov.diagonal()(4) *= 0.3;  // wy
-                // initialCov.diagonal()(5) *= 0.3;  // wz
-                // initialCov.diagonal()(6) *= 0.0005; // x
-                // initialCov.diagonal()(7) *= 0.0005; // y
-                // initialCov.diagonal()(8) *= 0.0005; // z
-                // initialCov.diagonal()(9) *= 0.0001; // roll
-                // initialCov.diagonal()(10) *= 0.0001; // pitch
-                // initialCov.diagonal()(11) *= 0.0001; // yaw
-
-                                // Scale initial uncertainties
+                
                 initialCov.diagonal()(0) *= 0.4;  // vx
                 initialCov.diagonal()(1) *= 0.1;  // vy
                 initialCov.diagonal()(2) *= 0.1;  // vz
@@ -228,17 +397,17 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
                 systemInitialized = true;
             }
             
-            // Create measurement from duck detections
-            if (!detections.centroids.empty())
+            // Create measurement from cached duck detections
+            if (!centroids.empty())
             {
-                int numDucks = detections.centroids.size();
+                int numDucks = centroids.size();
                 Eigen::Matrix<double, 3, Eigen::Dynamic> Y(3, numDucks);  // 3 rows: x, y, area
                 
                 for (int i = 0; i < numDucks; ++i)
                 {
-                    Y(0, i) = detections.centroids[i].x;  // Centroid x
-                    Y(1, i) = detections.centroids[i].y;  // Centroid y
-                    Y(2, i) = detections.areas[i];         // Area in pixels²
+                    Y(0, i) = centroids[i].x;  // Centroid x
+                    Y(1, i) = centroids[i].y;  // Centroid y
+                    Y(2, i) = areas[i];         // Area in pixels²
                 }
                 
                 duckMeasurement = std::make_unique<MeasurementDuckBundle>(time, Y, camera);
