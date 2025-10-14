@@ -24,6 +24,9 @@ public:
     SystemSLAM * clone() const override;
     virtual std::size_t numberLandmarks() const override;
     virtual std::size_t landmarkPositionIndex(std::size_t idxLandmark) const override;
+    
+    // Track consecutive association failures for landmark deletion
+    std::vector<int> consecutiveFailures_;
 };
 
 #endif

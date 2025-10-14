@@ -20,7 +20,7 @@ MeasurementDuckBundle::MeasurementDuckBundle(double time, const Eigen::Matrix<do
     : MeasurementSLAM(time, camera)
     , Y_(Y)
     , sigma_c_(20.0) // TODO: Assignment(s)
-    , sigma_a_(200.0) // TODO: Assignment(s)
+    , sigma_a_(5000.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;

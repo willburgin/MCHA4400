@@ -40,7 +40,6 @@ protected:
     double sigma_;                                  // Feature error standard deviation (in pixels)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
     std::vector<std::size_t> visibleLandmarks_;     // Visible landmarks
-    std::vector<int> consecutiveFailures_;          // Track consecutive failures for each landmark
 };
 
 // Image feature location for a given landmark

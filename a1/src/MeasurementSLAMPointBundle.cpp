@@ -15,12 +15,13 @@
 #include "Measurement.h"
 #include "MeasurementSLAM.h"
 #include "MeasurementSLAMPointBundle.h"
+#include "SystemSLAMPointLandmarks.h"
 #include "rotation.hpp"
 
 MeasurementPointBundle::MeasurementPointBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
     , Y_(Y)
-    , sigma_(5.0) // TODO: Assignment(s)
+    , sigma_(7.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
@@ -117,17 +118,20 @@ double MeasurementPointBundle::logLikelihood(const Eigen::VectorXd & x, const Sy
 void MeasurementPointBundle::update(SystemBase & system)
 {
     SystemSLAM & systemSLAM = dynamic_cast<SystemSLAM &>(system);
+    SystemSLAMPointLandmarks & systemPointLandmarks = dynamic_cast<SystemSLAMPointLandmarks &>(system);
+
+    // Ensure consecutiveFailures_ is sized correctly (only grow, never shrink)
+    if (systemPointLandmarks.consecutiveFailures_.size() < systemSLAM.numberLandmarks()) {
+        while (systemPointLandmarks.consecutiveFailures_.size() < systemSLAM.numberLandmarks()) {
+            systemPointLandmarks.consecutiveFailures_.push_back(0);
+        }
+    }
 
     // Get camera state for visibility checks
     Eigen::VectorXd x = systemSLAM.density.mean();
     Eigen::Vector3d rCNn = systemSLAM.cameraPositionDensity(camera_).mean();
     Eigen::Vector3d Thetanc = systemSLAM.cameraOrientationEulerDensity(camera_).mean();
     Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
-    
-    // Initialize consecutive failures vector if needed
-    if (consecutiveFailures_.size() != systemSLAM.numberLandmarks()) {
-        consecutiveFailures_.resize(systemSLAM.numberLandmarks(), 0);
-    }
     
     // Identify landmarks with matching features (FOV check + association)
     visibleLandmarks_.clear();
@@ -146,67 +150,80 @@ void MeasurementPointBundle::update(SystemBase & system)
     }
     
     idxFeatures_ = associate(systemSLAM, visibleLandmarks_);
-    
     // Update consecutive failures: only for visible landmarks
     for (std::size_t j = 0; j < visibleLandmarks_.size(); ++j) {
         std::size_t landmarkIdx = visibleLandmarks_[j];
         if (idxFeatures_[j] >= 0) {
-            // Successfully associated - reset failure count
-            consecutiveFailures_[landmarkIdx] = 0;
+            if (systemPointLandmarks.consecutiveFailures_[landmarkIdx] > 0) {
+                std::cout << "  Landmark " << landmarkIdx << " SUCCESSFULLY associated after " 
+                          << systemPointLandmarks.consecutiveFailures_[landmarkIdx] << " failures (reset to 0)" << std::endl;
+            }
+            systemPointLandmarks.consecutiveFailures_[landmarkIdx] = 0;
         } else {
-            // Failed to associate - increment failure count
-            consecutiveFailures_[landmarkIdx]++;
+            int oldValue = systemPointLandmarks.consecutiveFailures_[landmarkIdx];
+            systemPointLandmarks.consecutiveFailures_[landmarkIdx]++;
+            int newValue = systemPointLandmarks.consecutiveFailures_[landmarkIdx];
+            std::cout << "  Landmark " << landmarkIdx << " failed association (was=" << oldValue 
+                      << ", now=" << newValue << ")" << std::endl;
         }
     }
-    
-    // Determine which landmarks to delete
+
+    // Collect landmarks to delete
     std::vector<std::size_t> landmarksToDelete;
-    
-    // delete landmarks with >= 10 consecutive failures
+    int maxTotalLandmarks = 30;
+    int maxConsecutiveFailures = 10;
+
+    // Criterion 1: Delete landmarks with too many consecutive failures
+    std::cout << "Checking for deletion (threshold=" << maxConsecutiveFailures << "):" << std::endl;
     for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
-        if (consecutiveFailures_[i] >= 10) {
+        std::cout << "  Landmark " << i << ": failures=" << systemPointLandmarks.consecutiveFailures_[i];
+        if (systemPointLandmarks.consecutiveFailures_[i] >= maxConsecutiveFailures) {
+            std::cout << " -> MARKED FOR DELETION";
             landmarksToDelete.push_back(i);
         }
+        std::cout << std::endl;
     }
-    
-    // if at capacity, prune worst performers to make room
-    int maxTotalLandmarks = 30;
+
+    // Criterion 2: If at capacity, delete worst performers to make room
     int currentTotal = systemSLAM.numberLandmarks();
-    
     if (currentTotal >= maxTotalLandmarks) {
-        // Find landmarks with highest failure counts (not already marked for deletion)
-        std::vector<std::pair<int, size_t>> failureRanking; // (failures, landmarkIdx)
-        for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
-            if (consecutiveFailures_[i] < 10) {
-                failureRanking.push_back({consecutiveFailures_[i], i});
+        int spotsNeeded = 1;  // Want room for 5 new landmarks
+        int needToDelete = (currentTotal + spotsNeeded) - maxTotalLandmarks;
+        
+        if (needToDelete > 0) {
+            // Collect landmarks not already marked for deletion
+            std::vector<std::pair<int, size_t>> failureRanking;
+            for (std::size_t i = 0; i < systemSLAM.numberLandmarks(); ++i) {
+                // Skip if already marked for deletion
+                if (std::find(landmarksToDelete.begin(), landmarksToDelete.end(), i) == landmarksToDelete.end()) {
+                    failureRanking.push_back({systemPointLandmarks.consecutiveFailures_[i], i});
+                }
+            }
+            
+            // Sort by failures (descending)
+            std::sort(failureRanking.begin(), failureRanking.end(),
+                    [](const auto& a, const auto& b) { return a.first > b.first; });
+            
+            // Add worst performers to deletion list
+            for (int i = 0; i < std::min(needToDelete, (int)failureRanking.size()); ++i) {
+                landmarksToDelete.push_back(failureRanking[i].second);
             }
         }
-        
-        // Sort by failures (descending - worst first)
-        std::sort(failureRanking.begin(), failureRanking.end(),
-                  [](const auto& a, const auto& b) { return a.first > b.first; });
-        
-        // Delete worst performers to make room
-        int spotsNeeded = 5; // Make room for 5 new landmarks
-        int needToDelete = currentTotal - maxTotalLandmarks + spotsNeeded;
-        for (int i = 0; i < std::min(needToDelete, (int)failureRanking.size()); ++i) {
-            landmarksToDelete.push_back(failureRanking[i].second);
-        }
     }
-    
-    // Sort deletion list and remove duplicates
+
+    // Sort and remove duplicates
     std::sort(landmarksToDelete.begin(), landmarksToDelete.end());
     landmarksToDelete.erase(std::unique(landmarksToDelete.begin(), landmarksToDelete.end()), 
                             landmarksToDelete.end());
-    
-    // Delete landmarks in reverse order to maintain correct indices
+
+    // Delete in reverse order
     if (!landmarksToDelete.empty()) {
         std::cout << "Deleting " << landmarksToDelete.size() << " landmarks: ";
         for (auto it = landmarksToDelete.rbegin(); it != landmarksToDelete.rend(); ++it) {
             std::size_t landmarkIdx = *it;
-            std::cout << landmarkIdx << "(f=" << consecutiveFailures_[landmarkIdx] << ") ";
+            std::cout << landmarkIdx << "(f=" << systemPointLandmarks.consecutiveFailures_[landmarkIdx] << ") ";
             
-            // Get state indices to keep (all except this landmark's 3 DOF)
+            // Marginalize out landmark
             std::size_t stateIdx = systemSLAM.landmarkPositionIndex(landmarkIdx);
             std::vector<int> indicesToKeep;
             indicesToKeep.reserve(systemSLAM.density.dim() - 3);
@@ -217,13 +234,10 @@ void MeasurementPointBundle::update(SystemBase & system)
                 }
             }
             
-            // Marginalize out this landmark from density
             systemSLAM.density = systemSLAM.density.marginal(indicesToKeep);
+            systemPointLandmarks.consecutiveFailures_.erase(systemPointLandmarks.consecutiveFailures_.begin() + landmarkIdx);
             
-            // Remove from consecutive failures tracking
-            consecutiveFailures_.erase(consecutiveFailures_.begin() + landmarkIdx);
-            
-            // Remove from visible landmarks and associations if present
+            // Update visible landmarks list
             auto it_vis = std::find(visibleLandmarks_.begin(), visibleLandmarks_.end(), landmarkIdx);
             if (it_vis != visibleLandmarks_.end()) {
                 size_t position = std::distance(visibleLandmarks_.begin(), it_vis);
@@ -231,15 +245,14 @@ void MeasurementPointBundle::update(SystemBase & system)
                 idxFeatures_.erase(idxFeatures_.begin() + position);
             }
             
-            // Decrement all landmark indices > landmarkIdx in visibleLandmarks_
+            // Decrement indices > landmarkIdx
             for (size_t& idx : visibleLandmarks_) {
-                if (idx > landmarkIdx) {
-                    idx--;
-                }
+                if (idx > landmarkIdx) idx--;
             }
         }
         std::cout << std::endl;
     }
+
     
     // Identify surplus features that do not correspond to landmarks in the map
     std::vector<bool> detectionUsed(Y_.cols(), false);
@@ -365,7 +378,7 @@ void MeasurementPointBundle::update(SystemBase & system)
         
         // Create new landmark with prior
         Eigen::VectorXd mu_new = rPNn;
-        double epsilon = 1.0;  // Precision (low confidence in initial position)
+        double epsilon = 5.0;  // Precision (low confidence in initial position)
         Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(3, 3);
         Eigen::VectorXd nu_new = Xi_new * mu_new;
         
@@ -382,11 +395,20 @@ void MeasurementPointBundle::update(SystemBase & system)
         idxFeatures_.push_back(static_cast<int>(candidateIdx));
         
         // Initialize failure tracking for new landmark
-        consecutiveFailures_.push_back(0);
+        systemPointLandmarks.consecutiveFailures_.push_back(0);
     }
     
-    // Perform measurement update
+    if (systemPointLandmarks.consecutiveFailures_.size() > 3) {
+        std::cout << "Before Measurement::update() - Landmark 3 failures: " 
+              << systemPointLandmarks.consecutiveFailures_[3] << std::endl;
+    }
+
     Measurement::update(system);
+
+    if (systemPointLandmarks.consecutiveFailures_.size() > 3) {
+        std::cout << "After Measurement::update() - Landmark 3 failures: " 
+                << systemPointLandmarks.consecutiveFailures_[3] << std::endl;
+    }
 }
 
 // Image feature location for a given landmark and Jacobian
