@@ -132,7 +132,7 @@ void runVisualNavigationFromVideo(const std::filesystem::path & videoPath, const
     fs["camera"] >> camera;
     // align frame of body to camera frame
     Eigen::Matrix3d Rbc;
-    Rbc << 0, 0, 1,     // b1 = c3
+    Rbc <<  0, 0, 1,     // b1 = c3
             1, 0, 0,   // b2 = c1
             0, 1, 0;   // b3 = c2
 
