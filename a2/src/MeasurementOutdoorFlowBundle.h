@@ -20,8 +20,7 @@ public:
     virtual double logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const override;
 
     // Helper functions for log likelihood and visualisation
-    template <typename Scalar> Eigen::Matrix<Scalar, 3, Eigen::Dynamic> predictFlowImpl(const Eigen::VectorX<Scalar> & x, const Eigen::Matrix<double, 3, Eigen::Dynamic> & pkm1, const Eigen::Matrix<double, 3, Eigen::Dynamic> & pk) const;
-    template <typename Scalar> Scalar logLikelihoodImpl(const Eigen::VectorX<Scalar> & x) const;
+    template <typename Scalar> Eigen::Matrix<Scalar, 3, Eigen::Dynamic> predictFlowImpl(const Eigen::VectorX<Scalar> & x, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pkm1, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pk) const;    template <typename Scalar> Scalar logLikelihoodImpl(const Eigen::VectorX<Scalar> & x) const;
     Eigen::Matrix<double, 2, Eigen::Dynamic> predictedFeatures(const Eigen::VectorXd & x, const SystemEstimator & system) const;
 
     // Note: costOdometry is used only in Lab 11.
@@ -34,6 +33,9 @@ public:
     const Eigen::Matrix<double, 2, Eigen::Dynamic> & trackedPreviousFeatures() const;
     const Eigen::Matrix<double, 2, Eigen::Dynamic> & trackedCurrentFeatures() const;
     const std::vector<unsigned char> & inlierMask() const;
+
+    // override update to set flow event
+    virtual void update(SystemBase & system) override;
 protected:
     const Camera & camera_;
 
@@ -52,7 +54,7 @@ protected:
 };
 
 template <typename Scalar>
-Eigen::Matrix<Scalar, 3, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predictFlowImpl(const Eigen::VectorX<Scalar> & x, const Eigen::Matrix<double, 3, Eigen::Dynamic> & pkm1, const Eigen::Matrix<double, 3, Eigen::Dynamic> & pk) const
+Eigen::Matrix<Scalar, 3, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predictFlowImpl(const Eigen::VectorX<Scalar> & x, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pkm1, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pk) const
 {
     assert(x.rows() >= 18);
     assert(x.cols() == 1);
@@ -136,26 +138,32 @@ template <typename Scalar>
 Scalar MeasurementOutdoorFlowBundle::logLikelihoodImpl(const Eigen::VectorX<Scalar> & x) const
 {
     assert(pkm1_.cols() == pk_.cols());
-
-    Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pk_hat = predictFlowImpl(x, pkm1_, pk_);
+    
+    // Cast measured features to Scalar type for autodiff
+    Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pkm1_scalar = pkm1_.template cast<Scalar>();
+    Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pk_scalar = pk_.template cast<Scalar>();
+    
+    // Predict flow in homogeneous coordinates
+    Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pk_hat = predictFlowImpl(x, pkm1_scalar, pk_scalar);
     
     // Apply r() to both predicted AND measured features
     Eigen::Matrix<Scalar, 2, Eigen::Dynamic> rQbarOik_hat = 
         pk_hat.template topRows<2>().array().rowwise() / pk_hat.row(2).array();
     
     Eigen::Matrix<Scalar, 2, Eigen::Dynamic> rQbarOik_measured = 
-        pk_.template topRows<2>().array().rowwise() / pk_.row(2).array();
-
+        pk_scalar.template topRows<2>().array().rowwise() / pk_scalar.row(2).array();
+    
     Scalar logLik = Scalar(0);
     
+    // Measurement covariance - cast sigma_ to Scalar
     Eigen::Matrix2<Scalar> S = Scalar(sigma_) * Eigen::Matrix2<Scalar>::Identity();
     GaussianInfo<Scalar> measurementModel = GaussianInfo<Scalar>::fromSqrtMoment(S);
-
+    
     int nFeatures = pk_.cols();
     for (int i = 0; i < nFeatures; ++i) {
         // Residual: measured - predicted
         Eigen::Vector2<Scalar> residual = 
-            rQbarOik_measured.col(i).template cast<Scalar>() - rQbarOik_hat.col(i);
+            rQbarOik_measured.col(i) - rQbarOik_hat.col(i);
         
         // Evaluate log likelihood
         logLik += measurementModel.log(residual);

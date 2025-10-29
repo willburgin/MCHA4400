@@ -2,6 +2,10 @@
     "cmake.configureSettings": {
         "BUILD_DOCUMENTATION": "ON"
     },
+    "files.associations": {
+        "core": "cpp",
+        "specialfunctions": "cpp"
+    },
     // Uncomment for MSYS2
     // "cmake.generator": "Ninja",
     // "cmake.cmakePath": "C:/msys64/clang64/bin/cmake.exe",

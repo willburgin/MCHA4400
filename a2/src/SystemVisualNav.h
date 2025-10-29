@@ -49,7 +49,10 @@ public:
 
     cv::Mat & view();
     const cv::Mat & view() const;
+
+    void setFlowEvent(bool isEvent);
 protected:
+    bool isFlowEvent_ = false;
     cv::Mat view_;
 };
 

@@ -49,6 +49,7 @@ Eigen::MatrixXd SystemEstimator::augmentedDynamicsEst(double t, const Eigen::Mat
 {
     assert(X.size() > 0);
     int nx = X.rows();
+    assert(nx == 12);
     assert(X.cols() == 2*nx + 1);
 
     Eigen::VectorXd x = X.col(0);
@@ -69,7 +70,7 @@ Eigen::VectorXd SystemEstimator::RK4SDEHelper(const Eigen::VectorXd & xdw, doubl
     const std::vector<Eigen::Index> & idxQ = processNoiseIndex();
     
     const std::size_t nq = idxQ.size();
-    const std::size_t nx = xdw.size() - nq;
+    const std::size_t nx = 12;
 
     Eigen::VectorXd x(nx), dw(nx);
     x = xdw.head(nx);

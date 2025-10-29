@@ -12,6 +12,7 @@
 #include "GaussianInfo.hpp"
 #include "rotation.hpp"
 #include "SystemEstimator.h"
+#include "SystemVisualNav.h"
 #include "MeasurementOutdoorFlowBundle.h"
 
 MeasurementOutdoorFlowBundle::MeasurementOutdoorFlowBundle(double time, const Camera & camera, const cv::Mat & imgk_raw, const cv::Mat & imgkm1_raw, const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOikm1)
@@ -210,30 +211,51 @@ double MeasurementOutdoorFlowBundle::logLikelihood(const Eigen::VectorXd & x, co
 double MeasurementOutdoorFlowBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const
 {
     // Evaluate gradient for Newton and quasi-Newton methods
-    g.resize(x.size());
-    g.setZero();
-    // TODO: Assignment 2
-    return logLikelihood(x, system);
+    double logLik;
+    Eigen::VectorX<autodiff::dual> x_dual = x.cast<autodiff::dual>();
+    
+    // Create a lambda that computes the log likelihood
+    auto f = [&](const Eigen::VectorX<autodiff::dual>& x_) -> autodiff::dual {
+        return logLikelihoodImpl<autodiff::dual>(x_);
+    };
+    
+    // Compute gradient
+    autodiff::dual logLik_dual;
+    g = gradient(f, wrt(x_dual), at(x_dual), logLik_dual);
+    logLik = val(logLik_dual);
+    
+    return logLik;
 }
 
 double MeasurementOutdoorFlowBundle::logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g, Eigen::MatrixXd & H) const
 {
     // Evaluate Hessian for Newton method
     H.resize(x.size(), x.size());
-    H.setZero();
-    // TODO: Assignment 2
-    return logLikelihood(x, system, g);
+    
+    double logLik;
+    Eigen::VectorX<autodiff::dual2nd> x_dual2nd = x.cast<autodiff::dual2nd>();
+    
+    // Create a lambda that computes the log likelihood
+    auto f = [&](const Eigen::VectorX<autodiff::dual2nd>& x_) -> autodiff::dual2nd {
+        return logLikelihoodImpl<autodiff::dual2nd>(x_);
+    };
+    
+    // Compute gradient and Hessian
+    autodiff::dual2nd logLik_dual2nd;
+    H = hessian(f, wrt(x_dual2nd), at(x_dual2nd), logLik_dual2nd, g);
+    logLik = val(logLik_dual2nd);
+    
+    return logLik;
 }
-
 Eigen::Matrix<double, 2, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predictedFeatures(const Eigen::VectorXd & x, const SystemEstimator & system) const
 {
     std::size_t np = rQOik_.cols();
 
-    std::println("Debug predictedFeatures:");
-    std::println("  rBNn_k: {} {} {}", x(6), x(7), x(8));
-    std::println("  thetaNB_k: {} {} {}", x(9), x(10), x(11));
-    std::println("  rBNn_km1: {} {} {}", x(12), x(13), x(14));
-    std::println("  thetaNB_km1: {} {} {}", x(15), x(16), x(17));
+    // std::println("Debug predictedFeatures:");
+    // std::println("  rBNn_k: {} {} {}", x(6), x(7), x(8));
+    // std::println("  thetaNB_k: {} {} {}", x(9), x(10), x(11));
+    // std::println("  rBNn_km1: {} {} {}", x(12), x(13), x(14));
+    // std::println("  thetaNB_km1: {} {} {}", x(15), x(16), x(17));
 
     // Predict undistorted homogeneous image points in current frame
     Eigen::Matrix<double, 3, Eigen::Dynamic> pk(3, np);
@@ -254,6 +276,17 @@ Eigen::Matrix<double, 2, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predicted
     // TODO: Lab 11 - Apply lens distortion to undistorted features
     Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = camera_.distort(rQbarOik_hat);
     return rQOik_hat;
+}
+
+void MeasurementOutdoorFlowBundle::update(SystemBase & system_)
+{
+    // Set the flow event flag before the base class calls predict()
+    SystemVisualNav & system = dynamic_cast<SystemVisualNav &>(system_);
+    system.setFlowEvent(true);
+    std::println("Debug update: setFlowEvent(true)");
+    
+    // Call base class implementation (which calls predict() and does optimization)
+    Measurement::update(system_);
 }
 
 // Note: costOdometry is used only in Lab 11, not Assignment 2.
