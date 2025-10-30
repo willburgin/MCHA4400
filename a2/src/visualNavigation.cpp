@@ -127,11 +127,11 @@ void runVisualNavigationFromVideo(
     
     // Set initial uncertainties
     Eigen::MatrixXd P0 = Eigen::MatrixXd::Identity(18, 18);
-    P0.block<3,3>(0,0) *= 5.0;      // velocity uncertainty (small)
-    P0.block<3,3>(3,3) *= 5.0;      // angular velocity uncertainty (small)
-    P0.block<3,3>(6,6) *= 0.0001;      // position uncertainty
-    P0.block<3,3>(9,9) *= 0.0001;      // orientation uncertainty
-    P0.block<6,6>(12,12) *= 10.0;   // zeta uncertainty (large initially)
+    P0.block<3,3>(0,0) *= 3.0;      // velocity uncertainty (small)
+    P0.block<3,3>(3,3) *= 3.0;      // angular velocity uncertainty (small)
+    P0.block<3,3>(6,6) *= 0.001;      // position uncertainty
+    P0.block<3,3>(9,9) *= 0.001;      // orientation uncertainty
+    P0.block<6,6>(12,12) *= 5.0;   // zeta uncertainty (large initially)
     
     GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(eta0, P0);
     SystemVisualNav system(initialDensity);
@@ -185,6 +185,8 @@ void runVisualNavigationFromVideo(
                         y_alt(0) = currentAltitude - 7.0; // apply scale
                         // create altimeter measurement
                         MeasurementAltimeter measAlt(time, y_alt);
+                        // Altimeter is NOT a flow event - don't clone zeta
+                        system.setFlowEvent(false);
                         // measurement update
                         measAlt.process(system);
                         // set our previous altitude to the current altitude
@@ -193,6 +195,9 @@ void runVisualNavigationFromVideo(
                 }       
                 // Flow Bundle Measurement Update
                 MeasurementOutdoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
+                
+                // Flow bundle IS a flow event - clone zeta from eta
+                system.setFlowEvent(true);
                 
                 // Update system with measurement
                 Eigen::VectorXd x = system.density.mean();

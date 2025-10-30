@@ -271,17 +271,6 @@ Eigen::Matrix<double, 2, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predicted
     return rQOik_hat;
 }
 
-void MeasurementOutdoorFlowBundle::update(SystemBase & system_)
-{
-    // Set the flow event flag before the base class calls predict()
-    SystemVisualNav & system = dynamic_cast<SystemVisualNav &>(system_);
-    system.setFlowEvent(true);
-    std::println("Debug update: setFlowEvent(true)");
-    
-    // Call base class implementation (which calls predict() and does optimization)
-    Measurement::update(system_);
-}
-
 // Note: costOdometry is used only in Lab 11, not Assignment 2.
 double MeasurementOutdoorFlowBundle::costOdometry(const Eigen::VectorXd & etak, const Eigen::VectorXd & etakm1) const
 {

@@ -33,9 +33,6 @@ public:
     const Eigen::Matrix<double, 2, Eigen::Dynamic> & trackedPreviousFeatures() const;
     const Eigen::Matrix<double, 2, Eigen::Dynamic> & trackedCurrentFeatures() const;
     const std::vector<unsigned char> & inlierMask() const;
-
-    // override update to set flow event
-    virtual void update(SystemBase & system) override;
 protected:
     const Camera & camera_;
 
