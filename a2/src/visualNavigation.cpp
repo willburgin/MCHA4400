@@ -13,14 +13,14 @@
 #include "SystemVisualNav.h"
 #include "MeasurementOutdoorFlowBundle.h"
 #include "visualNavigation.h"
+#include "MeasurementAltimeter.h"
 
 // Forward declarations (reuse from visual odometry)
 static Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0);
 static void plotGroundPlane(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
 static void plotHorizon(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
 static void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
-static void plotEpipole(cv::Mat & img, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor);
-
+static void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor);
 void runVisualNavigationFromVideo(
     const std::filesystem::path & videoPath, 
     const std::filesystem::path & cameraPath, 
@@ -149,7 +149,8 @@ void runVisualNavigationFromVideo(
     }
 
     std::println("Starting visual navigation...");
-
+    const double altitudeChangeTolerance = 1.0; // only update altimeter measurement if altitude changes by more than this amount
+    double previousAltitude = -1.0;
     // Main Processing Loop 
     int k = 0;
     for (int i = 0;; ++i)
@@ -169,47 +170,48 @@ void runVisualNavigationFromVideo(
             if (k > 0)
             {
                 std::println("\n=== Frame {} (t = {:.3f}s) ===", i, time);
-                
-                // Create measurement from image pair and previous tracked features
-                MeasurementOutdoorFlowBundle measurement(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
+                // Altimeter Measurement Update
+                if (scenario == 4 && i < djiVideoCaption.size())
+                {
+                    double currentAltitude = djiVideoCaption[i].altitude;
+                    if (previousAltitude < 0 || std::abs(currentAltitude - previousAltitude) > altitudeChangeTolerance)
+                    {
+                        std::println("Altimeter update: altitude = {:.3f}m (change: {:.3f}m)", currentAltitude, currentAltitude - previousAltitude);
+                        Eigen::VectorXd y_alt(1);
+                        y_alt(0) = currentAltitude - 7.0; // apply scale
+                        // create altimeter measurement
+                        MeasurementAltimeter measAlt(time, y_alt);
+                        // measurement update
+                        measAlt.process(system);
+                        // set our previous altitude to the current altitude
+                        previousAltitude = currentAltitude;
+                    }         
+                }       
+                // Flow Bundle Measurement Update
+                MeasurementOutdoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
                 
                 // Update system with measurement
-                // This calls predict() and then performs optimization
-                // State before update:
-                std::println("Before update - eta: [{:.3f}, {:.3f}, {:.3f}]", 
-                    eta0(6), eta0(7), eta0(8));
-                std::println("Before update - zeta: [{:.3f}, {:.3f}, {:.3f}]", 
-                    eta0(12), eta0(13), eta0(14));
-                measurement.process(system); 
-                
-                // State after update:
-                std::println("After update - eta: [{:.3f}, {:.3f}, {:.3f}]", 
-                    eta0(6), eta0(7), eta0(8));
-                std::println("After update - zeta: [{:.3f}, {:.3f}, {:.3f}]", 
-                    eta0(12), eta0(13), eta0(14));                
-                // Extract current state estimate
                 Eigen::VectorXd x = system.density.mean();
                 Eigen::Vector6d etak = x.segment<6>(6);  // Current pose eta[k]
-                
+                Eigen::Vector6d zetak = x.segment<6>(12);  // Current pose zeta[k]
+
+                measFlow.process(system);          
+                // log etak after update
+                std::println("  >>> etak after update:");
+                std::println("etak = [{:.3f}, {:.3f}, {:.3f}]", 
+                           etak(0), etak(1), etak(2));
+
                 // Get tracked features for next iteration
-                rQOikm1 = measurement.trackedPreviousFeatures();
-                const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik = measurement.trackedCurrentFeatures();
-                
-                // Display state estimate
-                // std::println("State estimate:");
-                // std::println("  Position: [{:.3f}, {:.3f}, {:.3f}]", etak(0), etak(1), etak(2));
-                // std::println("  Orientation (RPY): [{:.3f}, {:.3f}, {:.3f}] deg", 
-                //     etak(3)*180/M_PI, etak(4)*180/M_PI, etak(5)*180/M_PI);
-                // std::println("  Features tracked: {}", rQOik.cols());
+                rQOikm1 = measFlow.trackedPreviousFeatures();
+                const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik = measFlow.trackedCurrentFeatures();
                 
                 // Visualization
-                
                 // Prepare output image (scaled)
                 cv::Mat imgout;
                 cv::resize(imgk_raw, imgout, cv::Size(), 1.0/divisor, 1.0/divisor);
                 
                 // Get predicted flow field for visualization
-                Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = measurement.predictedFeatures(x, system);
+                Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = measFlow.predictedFeatures(x, system);
                 
                 // Scale feature coordinates for plotting
                 std::vector<cv::Point2d> rQOikm1_scaled, rQOik_scaled, rQOik_hat_scaled;
@@ -236,7 +238,7 @@ void runVisualNavigationFromVideo(
                     cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_hat_scaled[j], 
                                    cv::Scalar(255, 0, 0), 1, cv::LINE_AA);
 
-                    if (measurement.inlierMask()[j])
+                    if (measFlow.inlierMask()[j])
                     {
                         // Measured inliers (green)
                         cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_scaled[j], 
@@ -253,8 +255,9 @@ void runVisualNavigationFromVideo(
                 // Plot overlays
                 plotGroundPlane(imgout, etak, camera, divisor);
                 plotHorizon(imgout, etak, camera, divisor);
-                // plotCompass(imgout, etak, camera, divisor);
-                // plotEpipole(imgout, etak, etakm1, camera, divisor);
+                plotCompass(imgout, etak, camera, divisor);
+                plotTransVelocity(imgout, x, etak, etakm1, camera, divisor);
+
 
                 // Display
                 cv::imshow("Visual Navigation", imgout);
@@ -305,7 +308,7 @@ Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0)
     eta0(1) = 0;      // East position
     eta0(2) = -ga;    // Down position (negative altitude)
     eta0(3) = 0;      // Roll
-    eta0(4) = 0.05;   // Pitch
+    eta0(4) = 0;   // Pitch
     eta0(5) = 0;      // Yaw
     
     return eta0;
@@ -403,89 +406,113 @@ void plotHorizon(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & cam
     cv::line(img, cv::Point(p1.x/divisor, p1.y/divisor),
              cv::Point(p2.x/divisor, p2.y/divisor),
              cv::Scalar(0, 0, 255), 2, cv::LINE_AA);  // Red line
-    
-    // Debug output
-    // std::cout << "Horizon line: " << a << "*u + " << b << "*v + " << c << " = 0" << std::endl;
-    // std::cout << "Horizon at v = " << -c/b << " (center of image)" << std::endl;
-    // std::cout << "Roll: " << etak(3)*180/M_PI << "°, "
-    //           << "Pitch: " << etak(4)*180/M_PI << "°, "
-    //           << "Yaw: " << etak(5)*180/M_PI << "°" << std::endl;
+
 }
 
 
-// void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor)
-// {
-//     Eigen::Vector3d rBNn = etak.head<3>();
-//     Eigen::Matrix3d Rnb = rpy2rot(etak.tail<3>());
-//     Pose<double> Tnb(Rnb, rBNn);
+void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor)
+{
+    Eigen::Vector3d rBNn = etak.head<3>();
+    Eigen::Matrix3d Rnb = rpy2rot(etak.tail<3>());
+    Pose<double> Tnb(Rnb, rBNn);
     
-//     // Get rotation from NED to camera
-//     Eigen::Matrix3d Rbc = camera.Tbc.rotationMatrix;
-//     Eigen::Matrix3d Rnc = Rnb * Rbc;
-//     Eigen::Matrix3d Rcn = Rnc.transpose();
+    // Get rotation from NED to camera
+    Eigen::Matrix3d Rbc = camera.Tbc.rotationMatrix;
+    Eigen::Matrix3d Rnc = Rnb * Rbc;
+    Eigen::Matrix3d Rcn = Rnc.transpose();
     
-//     struct Direction {
-//         std::string label;
-//         Eigen::Vector3d unit;
-//         cv::Scalar color;
-//     };
+    struct Direction {
+        std::string label;
+        Eigen::Vector3d unit;
+        cv::Scalar color;
+    };
     
-//     std::vector<Direction> directions = {
-//         {"N",  Eigen::Vector3d(1, 0, 0), cv::Scalar(0, 0, 255)},
-//         {"E",  Eigen::Vector3d(0, 1, 0), cv::Scalar(0, 255, 0)},
-//         {"S",  Eigen::Vector3d(-1, 0, 0), cv::Scalar(255, 0, 0)},
-//         {"W",  Eigen::Vector3d(0, -1, 0), cv::Scalar(255, 255, 0)},
-//         {"NE", Eigen::Vector3d(1, 1, 0).normalized(), cv::Scalar(0, 128, 255)},
-//         {"SE", Eigen::Vector3d(-1, 1, 0).normalized(), cv::Scalar(255, 128, 0)},
-//         {"SW", Eigen::Vector3d(-1, -1, 0).normalized(), cv::Scalar(255, 0, 128)},
-//         {"NW", Eigen::Vector3d(1, -1, 0).normalized(), cv::Scalar(128, 128, 255)}
-//     };
+    std::vector<Direction> directions = {
+        {"N",  Eigen::Vector3d(1, 0, 0), cv::Scalar(0, 0, 255)},
+        {"E",  Eigen::Vector3d(0, 1, 0), cv::Scalar(0, 255, 0)},
+        {"S",  Eigen::Vector3d(-1, 0, 0), cv::Scalar(255, 0, 0)},
+        {"W",  Eigen::Vector3d(0, -1, 0), cv::Scalar(255, 255, 0)},
+        {"NE", Eigen::Vector3d(1, 1, 0).normalized(), cv::Scalar(0, 128, 255)},
+        {"SE", Eigen::Vector3d(-1, 1, 0).normalized(), cv::Scalar(255, 128, 0)},
+        {"SW", Eigen::Vector3d(-1, -1, 0).normalized(), cv::Scalar(255, 0, 128)},
+        {"NW", Eigen::Vector3d(1, -1, 0).normalized(), cv::Scalar(128, 128, 255)}
+    };
     
-//     for (const auto& dir : directions) {
-//         Eigen::Vector3d direction_ned(dir.unit(0), dir.unit(1), 0);
-//         Eigen::Vector3d direction_camera = Rcn * direction_ned;
+    for (const auto& dir : directions) {
+        Eigen::Vector3d direction_ned(dir.unit(0), dir.unit(1), 0);
+        Eigen::Vector3d direction_camera = Rcn * direction_ned;
         
-//         cv::Vec3d direction_cv(direction_camera(0), direction_camera(1), direction_camera(2));
+        cv::Vec3d direction_cv(direction_camera(0), direction_camera(1), direction_camera(2));
         
-//         // Check if direction is within FOV
-//         if (!camera.isVectorWithinFOV(direction_cv)) continue;
+        // Check if direction is within FOV
+        if (!camera.isVectorWithinFOV(direction_cv)) continue;
         
-//         cv::Vec2d pixel = camera.vectorToPixel(direction_cv);
-//         cv::Point2d pt(pixel[0]/divisor, pixel[1]/divisor);
+        cv::Vec2d pixel = camera.vectorToPixel(direction_cv);
+        cv::Point2d pt(pixel[0]/divisor, pixel[1]/divisor);
         
-//         cv::putText(img, dir.label, pt, cv::FONT_HERSHEY_SIMPLEX,
-//                    0.8, dir.color, 2, cv::LINE_AA);
-//     }
-// }
+        cv::putText(img, dir.label, pt, cv::FONT_HERSHEY_SIMPLEX,
+                   0.8, dir.color, 2, cv::LINE_AA);
+    }
+}
 
-// void plotEpipole(cv::Mat & img, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor)
-// {
-//     Eigen::Vector3d rBNn_k = etak.head<3>();
-//     Eigen::Vector3d rBNn_km1 = etakm1.head<3>();
-//     Eigen::Matrix3d Rnb_k = rpy2rot(etak.tail<3>());
+void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor)
+{
+    // plot secant approximation of translational velocity (Epipole)
+    Eigen::Vector3d rBNn_k = etak.head<3>();
+    Eigen::Vector3d rBNn_km1 = etakm1.head<3>();
+    Eigen::Matrix3d Rnb_k = rpy2rot(etak.tail<3>());
     
-//     Eigen::Vector3d translation_ned = rBNn_k - rBNn_km1;
+    Eigen::Vector3d translation_ned = rBNn_k - rBNn_km1;
     
-//     if (translation_ned.norm() < 1e-6) return;
+    if (translation_ned.norm() < 1e-6) return;
     
-//     Eigen::Matrix3d Rbc = camera.Tbc.rotationMatrix;
-//     Eigen::Matrix3d Rnc_k = Rnb_k * Rbc;
-//     Eigen::Matrix3d Rcn_k = Rnc_k.transpose();
+    Eigen::Matrix3d Rbc = camera.Tbc.rotationMatrix;
+    Eigen::Matrix3d Rnc_k = Rnb_k * Rbc;
+    Eigen::Matrix3d Rcn_k = Rnc_k.transpose();
     
-//     Eigen::Vector3d translation_camera = Rcn_k * translation_ned;
+    Eigen::Vector3d translation_camera = Rcn_k * translation_ned;
     
-//     cv::Vec3d translation_cv(translation_camera(0), translation_camera(1), translation_camera(2));
+    cv::Vec3d translation_cv(translation_camera(0), translation_camera(1), translation_camera(2));
     
-//     // Check if epipole direction is within FOV
-//     if (!camera.isVectorWithinFOV(translation_cv)) return;
+    // Check if epipole direction is within FOV
+    if (!camera.isVectorWithinFOV(translation_cv)) return;
     
-//     cv::Vec2d pixel = camera.vectorToPixel(translation_cv);
-//     cv::Point2d epipole(pixel[0]/divisor, pixel[1]/divisor);
+    cv::Vec2d pixel = camera.vectorToPixel(translation_cv);
+    cv::Point2d epipole(pixel[0]/divisor, pixel[1]/divisor);
     
-//     cv::circle(img, epipole, 10, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
-//     cv::circle(img, epipole, 3, cv::Scalar(0, 165, 255), -1, cv::LINE_AA);
-//     cv::line(img, epipole + cv::Point2d(-15, 0), epipole + cv::Point2d(15, 0),
-//             cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
-//     cv::line(img, epipole + cv::Point2d(0, -15), epipole + cv::Point2d(0, 15),
-//             cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
-// }
+    cv::circle(img, epipole, 10, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+    cv::circle(img, epipole, 3, cv::Scalar(0, 165, 255), -1, cv::LINE_AA);
+    cv::line(img, epipole + cv::Point2d(-15, 0), epipole + cv::Point2d(15, 0),
+            cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+    cv::line(img, epipole + cv::Point2d(0, -15), epipole + cv::Point2d(0, 15),
+            cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+
+    // plot translational velocity
+    Eigen::Vector3d vBNb = x.segment<3>(0);  // Translational velocity in body frame
+    
+    // Transform velocity from body frame to NED frame
+    Eigen::Vector3d vBNn = Rnb_k * vBNb;
+    
+    // Transform velocity from NED to camera frame
+    Eigen::Vector3d vCNc = Rcn_k * vBNn;
+    
+    cv::Vec3d velocity_cv(vCNc(0), vCNc(1), vCNc(2));
+    
+    // Check if velocity direction is within FOV
+    if (camera.isVectorWithinFOV(velocity_cv)) {
+        cv::Vec2d pixel_vel = camera.vectorToPixel(velocity_cv);
+        cv::Point2d velocity_point(pixel_vel[0]/divisor, pixel_vel[1]/divisor);
+        
+        // Draw velocity vector in GREEN
+        cv::circle(img, velocity_point, 10, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+        cv::circle(img, velocity_point, 3, cv::Scalar(0, 255, 0), -1, cv::LINE_AA);
+        cv::line(img, velocity_point + cv::Point2d(-15, 0), velocity_point + cv::Point2d(15, 0),
+                cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+        cv::line(img, velocity_point + cv::Point2d(0, -15), velocity_point + cv::Point2d(0, 15),
+                cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+        
+        // Label
+        cv::putText(img, "Velocity (State)", velocity_point + cv::Point2d(15, 5),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+    }
+}

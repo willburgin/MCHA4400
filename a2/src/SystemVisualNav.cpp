@@ -27,81 +27,97 @@ void SystemVisualNav::setFlowEvent(bool isEvent)
 void SystemVisualNav::predict(double time)
 {
     double dt = time - time_;
-    std::println(">>> predict START: dt={:.6f}", dt);
     assert(dt >= 0);
     if (dt == 0.0) return;
-
-    std::println(">>> Current density dim: {}", density.dim());
     
     auto pdw = processNoiseDensity(dt);
-    std::println(">>> pdw dim: {}", pdw.dim());
     
     auto pxdw = density * pdw;
-    std::println(">>> pxdw (augmented) dim: {}", pxdw.dim());
 
     bool isFlowEvent = isFlowEvent_;
-    std::println(">>> isFlowEvent = {}", isFlowEvent);
 
     // Phi maps [ x[k]; dw(idxQ)[k] ] to x[k+1]
     auto Phi = [&, isFlowEvent](const Eigen::VectorXd & xdw, Eigen::MatrixXd & J)
     {
-        std::println("  >>> Phi called with xdw.size() = {}", xdw.size());
-        
-        int nx = xdw.size() - 6;
-        std::println("  >>> nx (state dim) = {}", nx);
+        int nx = xdw.size() - 6; // size 18
         
         // Extract z[k] = [nu[k]; eta[k]] (first 12 elements of state)
         Eigen::VectorXd zdw(18);
-        std::println("  >>> About to extract zdw.head(12)");
-        zdw.head(12) = xdw.head(12);
+        zdw.head(12) = xdw.head(12); // state
+        zdw.tail(6) = xdw.tail(6); // noise
         
-        std::println("  >>> About to extract zdw.tail(6)");
-        zdw.tail(6) = xdw.tail(6);
-        
-        std::println("  >>> About to call RK4SDEHelper");
+        // Integrate z[k] -> z[k+1] using RK4
         Eigen::MatrixXd J_zdw;
         Eigen::VectorXd z_kp1 = RK4SDEHelper(zdw, dt, J_zdw);
-        std::println("  >>> RK4SDEHelper returned, z_kp1.size() = {}", z_kp1.size());
         
-        std::println("  >>> About to extract eta_k at index 6");
+        // Extract poses for cloning
         Eigen::Vector6d eta_k = xdw.segment<6>(6);
-        
-        std::println("  >>> About to extract zeta_k at index 12");
         Eigen::Vector6d zeta_k = xdw.segment<6>(12);
-        
-        std::println("  >>> About to extract eta_kp1");
         Eigen::Vector6d eta_kp1 = z_kp1.segment<6>(6);
         
-        std::println("  >>> Building x_kp1 with size {}", nx);
+        // Build full state x[k+1]
         Eigen::VectorXd x_kp1(nx);
-        
         x_kp1.head(12) = z_kp1;
         
         if (isFlowEvent) {
-            std::println("  >>> Cloning: zeta[k+1] = eta[k]");
             x_kp1.segment<6>(12) = eta_k;
         } else {
-            std::println("  >>> Holding: zeta[k+1] = zeta[k]");
             x_kp1.segment<6>(12) = zeta_k;
         }
         
         int nm = nx - 18;
-        std::println("  >>> nm (map states) = {}", nm);
         if (nm > 0) {
             x_kp1.tail(nm) = xdw.segment(18, nm);
         }
         
-        std::println("  >>> Phi returning x_kp1");
+        // BUILD JACOBIAN 
+        J.resize(nx, xdw.size());  // 18 × 24
+        J.setZero();
+        
+        // Jacobian for [nu[k+1]; eta[k+1]] (rows 0-11)
+        // These only depend on [nu[k]; eta[k]] and dw, NOT on zeta[k]
+        J.block(0, 0, 12, 12) = J_zdw.leftCols(12);     // d[nu,eta]_{k+1}/d[nu,eta]_k
+        J.block(0, 12, 12, 6).setZero();                // d[nu,eta]_{k+1}/dzeta_k = 0
+        // Columns 18-23 are for landmarks (if any), set to zero
+        if (nm > 0) {
+            J.block(0, 18, 12, nm).setZero();           // d[nu,eta]_{k+1}/dm_k = 0
+        }
+        J.block(0, nx, 12, 6) = J_zdw.rightCols(6);     // d[nu,eta]_{k+1}/dw
+        
+        // Jacobian for zeta[k+1] (rows 12-17)
+        if (isFlowEvent) {
+            // zeta[k+1] = eta[k]
+            J.block(12, 0, 6, 6).setZero();              // dzeta_{k+1}/dnu_k = 0
+            J.block<6, 6>(12, 6).setIdentity();          // dzeta_{k+1}/deta_k = I
+            J.block(12, 12, 6, 6).setZero();             // dzeta_{k+1}/dzeta_k = 0
+            if (nm > 0) {
+                J.block(12, 18, 6, nm).setZero();        // dzeta_{k+1}/dm_k = 0
+            }
+            J.block(12, nx, 6, 6).setZero();             // dzeta_{k+1}/dw = 0
+        } else {
+            // zeta[k+1] = zeta[k]
+            J.block(12, 0, 6, 12).setZero();             // dzeta_{k+1}/d[nu,eta]_k = 0
+            J.block<6, 6>(12, 12).setIdentity();         // dzeta_{k+1}/dzeta_k = I
+            if (nm > 0) {
+                J.block(12, 18, 6, nm).setZero();        // dzeta_{k+1}/dm_k = 0
+            }
+            J.block(12, nx, 6, 6).setZero();             // dzeta_{k+1}/dw = 0
+        }
+        
+        // Jacobian for map states (rows 18+)
+        if (nm > 0) {
+            J.block(18, 0, nm, 18).setZero();            // dm_{k+1}/d[nu,eta,zeta]_k = 0
+            J.block(18, 18, nm, nm).setIdentity();       // dm_{k+1}/dm_k = I
+            J.block(18, nx, nm, 6).setZero();            // dm_{k+1}/dw = 0
+        }
+        
         return x_kp1;
     };
 
-    std::println(">>> About to call affineTransform");
     density = pxdw.affineTransform(Phi);
-    std::println(">>> affineTransform completed");
 
     time_ = time;
     isFlowEvent_ = false;
-    std::println(">>> predict END");
 }
 
 // Evaluate f(x) from the SDE dx = f(x)*dt + dw

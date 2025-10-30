@@ -267,7 +267,6 @@ Eigen::Matrix<double, 2, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predicted
 
     Eigen::Matrix<double, 3, Eigen::Dynamic> pk_hat = predictFlowImpl(x, pkm1, pk);
     for (int i = 0; i < std::min(5, (int)pk_hat.cols()); ++i) {
-        std::println("  pk_hat col {}: {} {} {}", i, pk_hat(0,i), pk_hat(1,i), pk_hat(2,i));
     }
     Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik_hat = pk_hat.topRows<2>().array().rowwise()/pk_hat.row(2).array();
     assert(rQbarOik_hat.cols() == np);
