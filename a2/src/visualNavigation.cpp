@@ -21,6 +21,9 @@ static void plotGroundPlane(cv::Mat & img, const Eigen::Vector6d & etak, const C
 static void plotHorizon(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
 static void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
 static void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor);
+static void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak, 
+                          const std::vector<DJIVideoCaption> & djiVideoCaption, 
+                          int frameIndex, int scenario);
 void runVisualNavigationFromVideo(
     const std::filesystem::path & videoPath, 
     const std::filesystem::path & cameraPath, 
@@ -195,11 +198,12 @@ void runVisualNavigationFromVideo(
                 Eigen::Vector6d etak = x.segment<6>(6);  // Current pose eta[k]
                 Eigen::Vector6d zetak = x.segment<6>(12);  // Current pose zeta[k]
 
-                measFlow.process(system);          
-                // log etak after update
-                std::println("  >>> etak after update:");
-                std::println("etak = [{:.3f}, {:.3f}, {:.3f}]", 
-                           etak(0), etak(1), etak(2));
+                measFlow.process(system);
+                
+                // Update state after measurement
+                x = system.density.mean();
+                etak = x.segment<6>(6);
+                zetak = x.segment<6>(12);
 
                 // Get tracked features for next iteration
                 rQOikm1 = measFlow.trackedPreviousFeatures();
@@ -257,7 +261,7 @@ void runVisualNavigationFromVideo(
                 plotHorizon(imgout, etak, camera, divisor);
                 plotCompass(imgout, etak, camera, divisor);
                 plotTransVelocity(imgout, x, etak, etakm1, camera, divisor);
-
+                plotStateInfo(imgout, etak, djiVideoCaption, i, scenario);
 
                 // Display
                 cv::imshow("Visual Navigation", imgout);
@@ -309,7 +313,7 @@ Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0)
     eta0(2) = -ga;    // Down position (negative altitude)
     eta0(3) = 0;      // Roll
     eta0(4) = 0;   // Pitch
-    eta0(5) = 0;      // Yaw
+    eta0(5) = 0;
     
     return eta0;
 }
@@ -452,6 +456,55 @@ void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & cam
         
         cv::putText(img, dir.label, pt, cv::FONT_HERSHEY_SIMPLEX,
                    0.8, dir.color, 2, cv::LINE_AA);
+    }
+}
+
+void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak, 
+                   const std::vector<DJIVideoCaption> & djiVideoCaption, 
+                   int frameIndex, int scenario)
+{
+    // Text display parameters
+    const int textX = 10;
+    const int textStartY = 30;
+    const int lineSpacing = 25;
+    const double fontScale = 0.6;
+    const int thickness = 2;
+    const cv::Scalar blueColor(255, 0, 0);   // BGR: Blue
+    const cv::Scalar greenColor(0, 255, 0);  // BGR: Green
+    
+    int textY = textStartY;
+    
+    // Extract estimated position (NED coordinates)
+    double estNorth = etak(0);      // North position [m]
+    double estEast = etak(1);       // East position [m]
+    double estDown = etak(2);       // Down position [m]
+    double estAltitude = -estDown;  // Altitude (negative of Down) [m]
+    
+    // Display estimated North position (blue)
+    std::string northText = std::format("Est North: {:.2f} m", estNorth);
+    cv::putText(img, northText, cv::Point(textX, textY), 
+               cv::FONT_HERSHEY_SIMPLEX, fontScale, blueColor, thickness, cv::LINE_AA);
+    
+    // Display estimated East position (blue)
+    textY += lineSpacing;
+    std::string eastText = std::format("Est East: {:.2f} m", estEast);
+    cv::putText(img, eastText, cv::Point(textX, textY), 
+               cv::FONT_HERSHEY_SIMPLEX, fontScale, blueColor, thickness, cv::LINE_AA);
+    
+    // Display estimated altitude (blue)
+    textY += lineSpacing;
+    std::string estAltText = std::format("Est Alt: {:.2f} m", estAltitude);
+    cv::putText(img, estAltText, cv::Point(textX, textY), 
+               cv::FONT_HERSHEY_SIMPLEX, fontScale, blueColor, thickness, cv::LINE_AA);
+    
+    // Display measured altitude from GPS (green) if available
+    if (scenario == 4 && frameIndex < djiVideoCaption.size())
+    {
+        textY += lineSpacing;
+        double measuredAltitude = djiVideoCaption[frameIndex].altitude - 7.0;  // Apply same scale as altimeter
+        std::string measAltText = std::format("Meas Alt: {:.2f} m", measuredAltitude);
+        cv::putText(img, measAltText, cv::Point(textX, textY), 
+                   cv::FONT_HERSHEY_SIMPLEX, fontScale, greenColor, thickness, cv::LINE_AA);
     }
 }
 
