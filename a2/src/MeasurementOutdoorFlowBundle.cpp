@@ -251,12 +251,6 @@ Eigen::Matrix<double, 2, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predicted
 {
     std::size_t np = rQOik_.cols();
 
-    // std::println("Debug predictedFeatures:");
-    // std::println("  rBNn_k: {} {} {}", x(6), x(7), x(8));
-    // std::println("  thetaNB_k: {} {} {}", x(9), x(10), x(11));
-    // std::println("  rBNn_km1: {} {} {}", x(12), x(13), x(14));
-    // std::println("  thetaNB_km1: {} {} {}", x(15), x(16), x(17));
-
     // Predict undistorted homogeneous image points in current frame
     Eigen::Matrix<double, 3, Eigen::Dynamic> pk(3, np);
     Eigen::Matrix<double, 3, Eigen::Dynamic> pkm1(3, np);

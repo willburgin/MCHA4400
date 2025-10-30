@@ -60,6 +60,7 @@ void runVisualNavigationFromVideo(
                                    + std::to_string(divisor)
                                    + "_"
                                    + std::to_string(imgModulus)
+                                   + "_out"
                                    + videoPath.extension().string();
         outputPath = outputDirectory / outputFilename;
     }
