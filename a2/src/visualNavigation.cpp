@@ -124,14 +124,13 @@ void runVisualNavigationFromVideo(
     
     // Set initial uncertainties
     Eigen::MatrixXd P0 = Eigen::MatrixXd::Identity(18, 18);
-    P0.block<3,3>(0,0) *= 3.0;      // velocity uncertainty (small)
-    P0.block<3,3>(3,3) *= 3.0;      // angular velocity uncertainty (small)
+    P0.block<3,3>(0,0) *= 5.0;      // velocity uncertainty (small)
+    P0.block<3,3>(3,3) *= 5.0;      // angular velocity uncertainty (small)
     P0.block<3,3>(6,6) *= 0.01;      // position uncertainty
     P0.block<3,3>(9,9) *= 0.01;      // orientation uncertainty
     P0.block<6,6>(12,12) *= 5.0;   // zeta uncertainty (large initially)
     
     GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(eta0, P0);
-    // eta0.segment<6>(12) = eta0.segment<6>(6);
     SystemVisualNav system(initialDensity);
     
     // Feature tracking state (similar to visual odometry)
@@ -327,7 +326,7 @@ Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0)
     eta0(1) = 0;      // East position
     eta0(2) = -ga;    // Down position (negative altitude)
     eta0(3) = 0;      // Roll
-    eta0(4) = 0;   // Pitch
+    eta0(4) = 0.05;   // Pitch
     eta0(5) = 0;
     
     return eta0;
