@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cmath>
 #include <print>
 #include <numeric>
 #include <vector>
@@ -271,6 +272,147 @@ Eigen::Matrix<double, 2, Eigen::Dynamic> MeasurementOutdoorFlowBundle::predicted
     return rQOik_hat;
 }
 
+void MeasurementOutdoorFlowBundle::update(SystemBase & system_)
+{
+    // Downcast to SystemEstimator
+    SystemEstimator & system = dynamic_cast<SystemEstimator &>(system_);
+    
+    std::println("Before confidence filtering: {} features", pk_.cols());
+    
+    // Build a mask for features within 3-sigma confidence region
+    std::vector<bool> confidenceMask(pk_.cols(), false);
+    int nWithinConfidence = 0;
+    
+    const double nSigma = 3.0;  // 3-sigma confidence region
+    
+    // For each inlier feature
+    for (int i = 0, inlierIdx = 0; i < static_cast<int>(mask_.size()); ++i) {
+        if (!mask_[i]) continue;  // Skip outliers from RANSAC
+        
+        // Predict feature density: p(y_i | x) by propagating uncertainty through h(x) + v
+        GaussianInfo<double> predictedDensity = predictFeatureDensity(system, inlierIdx);
+        
+        // Get measured feature location
+        Eigen::Vector2d measured_undist = pk_.col(inlierIdx).head<2>() / pk_(2, inlierIdx);
+        
+        // Check if measurement is within confidence region
+        if (predictedDensity.isWithinConfidenceRegion(measured_undist, nSigma)) {
+            confidenceMask[inlierIdx] = true;
+            nWithinConfidence++;
+        } else {
+            Eigen::Vector2d predicted = predictedDensity.mean();
+            Eigen::Vector2d residual = measured_undist - predicted;
+            std::println("  Feature {} rejected: residual=[{:.2f}, {:.2f}], norm={:.2f}px", 
+                       i, residual(0), residual(1), residual.norm());
+        }
+        
+        inlierIdx++;
+    }
+    
+    std::println("After confidence filtering: {} features (rejected {})", 
+               nWithinConfidence, pk_.cols() - nWithinConfidence);
+    
+    // Update pkm1_ and pk_ to only include features within confidence region
+    Eigen::MatrixXd pkm1_filtered = Eigen::MatrixXd::Ones(3, nWithinConfidence);
+    Eigen::MatrixXd pk_filtered = Eigen::MatrixXd::Ones(3, nWithinConfidence);
+    
+    int filteredIdx = 0;
+    for (int j = 0; j < pk_.cols(); ++j) {
+        if (confidenceMask[j]) {
+            pkm1_filtered.col(filteredIdx) = pkm1_.col(j);
+            pk_filtered.col(filteredIdx) = pk_.col(j);
+            filteredIdx++;
+        }
+    }
+    
+    pkm1_ = pkm1_filtered;
+    pk_ = pk_filtered;
+    
+    // Also update the mask to reflect confidence-based filtering
+    int originalIdx = 0;
+    for (int i = 0; i < static_cast<int>(mask_.size()); ++i) {
+        if (mask_[i]) {
+            mask_[i] = confidenceMask[originalIdx];
+            originalIdx++;
+        }
+    }
+    
+    // Now call the base class update with filtered measurements
+    Measurement::update(system);
+}
+
+GaussianInfo<double> MeasurementOutdoorFlowBundle::predictFeatureDensity(const SystemEstimator & system, std::size_t pointIdx) const
+{
+    const std::size_t nx = system.density.dim();
+    const std::size_t ny = 2;  // 2D pixel coordinates
+    
+    //   y   =   h(x) + v  
+    // \___/   \__________/
+    //   ya  =   ha(x, v)
+    //
+    // Helper function to evaluate ha(x, v) and its Jacobian Ja = [dha/dx, dha/dv]
+    Eigen::Vector3d pk_i = pk_.col(pointIdx);
+    Eigen::Vector3d pkm1_i = pkm1_.col(pointIdx);
+    
+    const auto func = [&](const Eigen::VectorXd & xv, Eigen::MatrixXd & Ja)
+    {
+        assert(xv.size() == nx + ny);
+        Eigen::VectorXd x = xv.head(nx);
+        Eigen::VectorXd v = xv.tail(ny);
+        
+        // Predict flow for this single feature using double
+        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_single(3, 1);
+        pk_single.col(0) = pk_i;
+        Eigen::Matrix<double, 3, Eigen::Dynamic> pkm1_single(3, 1);
+        pkm1_single.col(0) = pkm1_i;
+        
+        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_hat = 
+            predictFlowImpl(x, pkm1_single, pk_single);
+        
+        // Apply r() to convert homogeneous to 2D (just like logLikelihoodImpl!)
+        Eigen::Vector2d predicted_undist = 
+            pk_hat.col(0).head<2>() / pk_hat(2, 0);
+        
+        // Add measurement noise
+        Eigen::VectorXd ya = predicted_undist + v;
+        
+        // Compute Jacobian using autodiff
+        Eigen::VectorX<autodiff::dual> x_dual = x.cast<autodiff::dual>();
+        
+        Eigen::MatrixXd J_hx(ny, nx);
+        for (int i = 0; i < ny; ++i) {
+            auto h_i = [&](const Eigen::VectorX<autodiff::dual> & x_ad) -> autodiff::dual {
+                // Predict with autodiff::dual
+                Eigen::Matrix<autodiff::dual, 3, Eigen::Dynamic> pk_single_dual(3, 1);
+                pk_single_dual.col(0) = pk_i.cast<autodiff::dual>();
+                Eigen::Matrix<autodiff::dual, 3, Eigen::Dynamic> pkm1_single_dual(3, 1);
+                pkm1_single_dual.col(0) = pkm1_i.cast<autodiff::dual>();
+                
+                Eigen::Matrix<autodiff::dual, 3, Eigen::Dynamic> pk_hat_dual = 
+                    predictFlowImpl(x_ad, pkm1_single_dual, pk_single_dual);
+                
+                // Apply r() - THIS IS THE KEY STEP
+                Eigen::Vector2<autodiff::dual> predicted_undist_dual = 
+                    pk_hat_dual.col(0).head(2) / pk_hat_dual(2, 0);
+                
+                return predicted_undist_dual(i);
+            };
+            
+            autodiff::dual yi;
+            J_hx.row(i) = gradient(h_i, wrt(x_dual), at(x_dual), yi);
+        }
+        
+        // Build full Jacobian [dh/dx, dh/dv]
+        Ja.resize(ny, nx + ny);
+        Ja.leftCols(nx) = J_hx;
+        Ja.rightCols(ny) = Eigen::MatrixXd::Identity(ny, ny);
+        
+        return ya;
+    };
+    auto pv = GaussianInfo<double>::fromSqrtMoment(sigma_ * Eigen::MatrixXd::Identity(ny, ny));
+    auto pxv = system.density * pv;
+    return pxv.affineTransform(func);
+}
 // Note: costOdometry is used only in Lab 11, not Assignment 2.
 double MeasurementOutdoorFlowBundle::costOdometry(const Eigen::VectorXd & etak, const Eigen::VectorXd & etakm1) const
 {

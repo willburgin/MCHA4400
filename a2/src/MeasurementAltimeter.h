@@ -63,7 +63,7 @@ protected:
     virtual std::string getProcessString() const override;
 
 private:
-    static constexpr double sigma_altimeter_ = 2.0;  ///< Altimeter noise std dev [meters]
+    static constexpr double sigma_altimeter_ = 20.0;  ///< Altimeter noise std dev [meters]
 };
 
 #endif  // MEASUREMENTALTIMETER_H

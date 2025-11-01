@@ -28,94 +28,117 @@ void SystemVisualNav::predict(double time)
 {
     double dt = time - time_;
     assert(dt >= 0);
-    if (dt == 0.0) return;
+    Eigen::VectorXd x_before = density.mean();
     
-    auto pdw = processNoiseDensity(dt);
-    
-    auto pxdw = density * pdw;
-
-    bool isFlowEvent = isFlowEvent_;
-
-    // Phi maps [ x[k]; dw(idxQ)[k] ] to x[k+1]
-    auto Phi = [&, isFlowEvent](const Eigen::VectorXd & xdw, Eigen::MatrixXd & J)
+    if (dt == 0.0) {
+    auto Phi = [&](const Eigen::VectorXd& x, Eigen::MatrixXd& J)
     {
-        int nx = xdw.size() - 6; // size 18
-        
-        // Extract z[k] = [nu[k]; eta[k]] (first 12 elements of state)
-        Eigen::VectorXd zdw(18);
-        zdw.head(12) = xdw.head(12); // state
-        zdw.tail(6) = xdw.tail(6); // noise
-        
-        // Integrate z[k] -> z[k+1] using RK4
-        Eigen::MatrixXd J_zdw;
-        Eigen::VectorXd z_kp1 = RK4SDEHelper(zdw, dt, J_zdw);
-        
-        // Extract poses for cloning
-        Eigen::Vector6d eta_k = xdw.segment<6>(6);
-        Eigen::Vector6d zeta_k = xdw.segment<6>(12);
-        Eigen::Vector6d eta_kp1 = z_kp1.segment<6>(6);
-        
-        // Build full state x[k+1]
-        Eigen::VectorXd x_kp1(nx);
-        x_kp1.head(12) = z_kp1;
-        
-        if (isFlowEvent) {
-            x_kp1.segment<6>(12) = eta_k;
-        } else {
-            x_kp1.segment<6>(12) = zeta_k;
-        }
-        
-        int nm = nx - 18;
-        if (nm > 0) {
-            x_kp1.tail(nm) = xdw.segment(18, nm);
-        }
-        
-        // BUILD JACOBIAN 
-        J.resize(nx, xdw.size());  // 18 × 24
-        J.setZero();
-        
-        // Jacobian for [nu[k+1]; eta[k+1]] (rows 0-11)
-        // These only depend on [nu[k]; eta[k]] and dw, NOT on zeta[k]
-        J.block(0, 0, 12, 12) = J_zdw.leftCols(12);     // d[nu,eta]_{k+1}/d[nu,eta]_k
-        J.block(0, 12, 12, 6).setZero();                // d[nu,eta]_{k+1}/dzeta_k = 0
-        // Columns 18-23 are for landmarks (if any), set to zero
-        if (nm > 0) {
-            J.block(0, 18, 12, nm).setZero();           // d[nu,eta]_{k+1}/dm_k = 0
-        }
-        J.block(0, nx, 12, 6) = J_zdw.rightCols(6);     // d[nu,eta]_{k+1}/dw
-        
-        // Jacobian for zeta[k+1] (rows 12-17)
-        if (isFlowEvent) {
-            // zeta[k+1] = eta[k]
-            J.block(12, 0, 6, 6).setZero();              // dzeta_{k+1}/dnu_k = 0
-            J.block<6, 6>(12, 6).setIdentity();          // dzeta_{k+1}/deta_k = I
-            J.block(12, 12, 6, 6).setZero();             // dzeta_{k+1}/dzeta_k = 0
-            if (nm > 0) {
-                J.block(12, 18, 6, nm).setZero();        // dzeta_{k+1}/dm_k = 0
-            }
-            J.block(12, nx, 6, 6).setZero();             // dzeta_{k+1}/dw = 0
-        } else {
-            // zeta[k+1] = zeta[k]
-            J.block(12, 0, 6, 12).setZero();             // dzeta_{k+1}/d[nu,eta]_k = 0
-            J.block<6, 6>(12, 12).setIdentity();         // dzeta_{k+1}/dzeta_k = I
-            if (nm > 0) {
-                J.block(12, 18, 6, nm).setZero();        // dzeta_{k+1}/dm_k = 0
-            }
-            J.block(12, nx, 6, 6).setZero();             // dzeta_{k+1}/dw = 0
-        }
-        
-        // Jacobian for map states (rows 18+)
-        if (nm > 0) {
-            J.block(18, 0, nm, 18).setZero();            // dm_{k+1}/d[nu,eta,zeta]_k = 0
-            J.block(18, 18, nm, nm).setIdentity();       // dm_{k+1}/dm_k = I
-            J.block(18, nx, nm, 6).setZero();            // dm_{k+1}/dw = 0
-        }
-        
+        const int nx = x.size();
+
+        // No time evolution, no noise, no cloning yet.
+        Eigen::VectorXd x_kp1 = x;
+
+        J.resize(nx, nx);
+        J.setIdentity();
+
+        // IMPORTANT:
+        // Do NOT modify zeta here, even if isFlowEvent == true.
+        // Leave x_kp1.segment<6>(12) as-is.
+        // Leave J rows [12..17] as identity on [12..17].
+
         return x_kp1;
     };
 
-    density = pxdw.affineTransform(Phi);
-
+    density = density.affineTransform(Phi);
+    } else {
+        // Normal case: dt > 0, with process noise and dynamics
+        auto pdw = processNoiseDensity(dt);
+        auto pxdw = density * pdw;
+        bool isFlowEvent = isFlowEvent_;
+        
+        auto Phi = [&, isFlowEvent](const Eigen::VectorXd & xdw, Eigen::MatrixXd & J)
+        {
+            int nx = xdw.size() - 6; // size 18 (+ landmarks)
+            
+            // Extract z[k] = [nu[k]; eta[k]] (first 12 elements of state)
+            Eigen::VectorXd zdw(18);
+            zdw.head(12) = xdw.head(12); // state
+            zdw.tail(6) = xdw.tail(6);   // noise
+            
+            // Integrate z[k] -> z[k+1] using RK4
+            Eigen::MatrixXd J_zdw;
+            Eigen::VectorXd z_kp1 = RK4SDEHelper(zdw, dt, J_zdw);
+            
+            // Extract poses for cloning
+            Eigen::Vector6d eta_k = xdw.segment<6>(6);
+            Eigen::Vector6d zeta_k = xdw.segment<6>(12);
+            
+            // Build full state x[k+1]
+            Eigen::VectorXd x_kp1(nx);
+            x_kp1.head(12) = z_kp1;
+            
+            if (isFlowEvent) {
+                x_kp1.segment<6>(12) = eta_k;
+            } else {
+                x_kp1.segment<6>(12) = zeta_k;
+            }
+            
+            int nm = nx - 18;
+            if (nm > 0) {
+                x_kp1.tail(nm) = xdw.segment(18, nm);
+            }
+            
+            // BUILD JACOBIAN 
+            J.resize(nx, xdw.size());  // nx × (nx + 6)
+            J.setZero();
+            
+            // Jacobian for [nu[k+1]; eta[k+1]] (rows 0-11)
+            J.block(0, 0, 12, 12) = J_zdw.leftCols(12);     // d[nu,eta]_{k+1}/d[nu,eta]_k
+            J.block(0, 12, 12, 6).setZero();                // d[nu,eta]_{k+1}/dzeta_k = 0
+            if (nm > 0) {
+                J.block(0, 18, 12, nm).setZero();           // d[nu,eta]_{k+1}/dm_k = 0
+            }
+            J.block(0, nx, 12, 6) = J_zdw.rightCols(6);     // d[nu,eta]_{k+1}/dw
+            
+            // Jacobian for zeta[k+1] (rows 12-17)
+            if (isFlowEvent) {
+                // zeta[k+1] = eta[k]
+                J.block(12, 0, 6, 6).setZero();              // dzeta_{k+1}/dnu_k = 0
+                J.block<6, 6>(12, 6).setIdentity();          // dzeta_{k+1}/deta_k = I
+                J.block(12, 12, 6, 6).setZero();             // dzeta_{k+1}/dzeta_k = 0
+                if (nm > 0) {
+                    J.block(12, 18, 6, nm).setZero();        // dzeta_{k+1}/dm_k = 0
+                }
+                J.block(12, nx, 6, 6).setZero();             // dzeta_{k+1}/dw = 0
+            } else {
+                // zeta[k+1] = zeta[k]
+                J.block(12, 0, 6, 12).setZero();             // dzeta_{k+1}/d[nu,eta]_k = 0
+                J.block<6, 6>(12, 12).setIdentity();         // dzeta_{k+1}/dzeta_k = I
+                if (nm > 0) {
+                    J.block(12, 18, 6, nm).setZero();        // dzeta_{k+1}/dm_k = 0
+                }
+                J.block(12, nx, 6, 6).setZero();             // dzeta_{k+1}/dw = 0
+            }
+            
+            // Jacobian for map states (rows 18+)
+            if (nm > 0) {
+                J.block(18, 0, nm, 18).setZero();            // dm_{k+1}/d[nu,eta,zeta]_k = 0
+                J.block(18, 18, nm, nm).setIdentity();       // dm_{k+1}/dm_k = I
+                J.block(18, nx, nm, 6).setZero();            // dm_{k+1}/dw = 0
+            }
+            
+            return x_kp1;
+        };
+        
+        density = pxdw.affineTransform(Phi);
+    }
+    Eigen::VectorXd x_after = density.mean();
+    
+    std::println("Predict dt={:.4f}, isFlow={}, velocity before=[{:.3f},{:.3f},{:.3f}], after=[{:.3f},{:.3f},{:.3f}]",
+               dt, isFlowEvent_, 
+               x_before(0), x_before(1), x_before(2),
+               x_after(0), x_after(1), x_after(2));
+    
     time_ = time;
     isFlowEvent_ = false;
 }
@@ -123,7 +146,6 @@ void SystemVisualNav::predict(double time)
 // Evaluate f(x) from the SDE dx = f(x)*dt + dw
 Eigen::VectorXd SystemVisualNav::dynamics(double t, const Eigen::VectorXd & x, const Eigen::VectorXd & u) const
 {
-    assert(density.dim() == x.size());
     //
     //  dnu/dt =          0 + dwnu/dt
     // deta/dt = JK(eta)*nu +       0
@@ -183,7 +205,6 @@ Eigen::VectorXd SystemVisualNav::dynamics(double t, const Eigen::VectorXd & x, c
     double cpsi = std::cos(psi);
     double spsi = std::sin(psi);
     double ttheta = std::tan(theta);
-    double sec_theta = 1 / std::cos(theta);
     // build matrix
     Eigen::Matrix3d dRnb_dvBNb = rpy2rot(Thetanb);
     Eigen::Matrix3d dRnb_dThetanb = Eigen::Matrix3d::Zero();
@@ -223,12 +244,12 @@ GaussianInfo<double> SystemVisualNav::processNoiseDensity(double dt) const
     // SQ is an upper triangular matrix such that SQ.'*SQ = Q is the power spectral density of the continuous time process noise
 
     // // TODO: Assignment(s) Tuning parameters
-    const double sigma_vx = 0.2;  // m/s / sqrt(s)
-    const double sigma_vy = 0.2;  // m/s / sqrt(s)
-    const double sigma_vz = 0.3;  // m/s / sqrt(s)
+    const double sigma_vx = 0.5;  // m/s / sqrt(s)
+    const double sigma_vy = 0.5;  // m/s / sqrt(s)
+    const double sigma_vz = 0.8;  // m/s / sqrt(s)
     const double sigma_p  = 0.2;  // rad/s / sqrt(s)
     const double sigma_q  = 0.2;  // rad/s / sqrt(s)
-    const double sigma_r  = 0.09;  // rad/s / sqrt(s)
+    const double sigma_r  = 0.4;  // rad/s / sqrt(s)
 
     Eigen::Matrix<double, 6, 6> SQ = Eigen::Matrix<double, 6, 6>::Zero();
     SQ(0,0) = sigma_vx;

@@ -14,6 +14,7 @@ void SystemEstimator::predict(double time)
 {
     double dt = time - time_;
     assert(dt >= 0);
+    std::cout << "IM HERE" << std::endl;
     if (dt == 0.0) return;
 
     // Augment state density with independent noise increment dw ~ N^{-1}(0, LambdaQ/dt)

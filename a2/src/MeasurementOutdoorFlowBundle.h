@@ -22,6 +22,7 @@ public:
     // Helper functions for log likelihood and visualisation
     template <typename Scalar> Eigen::Matrix<Scalar, 3, Eigen::Dynamic> predictFlowImpl(const Eigen::VectorX<Scalar> & x, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pkm1, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pk) const;    template <typename Scalar> Scalar logLikelihoodImpl(const Eigen::VectorX<Scalar> & x) const;
     Eigen::Matrix<double, 2, Eigen::Dynamic> predictedFeatures(const Eigen::VectorXd & x, const SystemEstimator & system) const;
+    GaussianInfo<double> predictFeatureDensity(const SystemEstimator & system, std::size_t pointIdx) const;
 
     // Note: costOdometry is used only in Lab 11.
     //       Assignment 2 uses costJointDensity instead.
@@ -33,6 +34,9 @@ public:
     const Eigen::Matrix<double, 2, Eigen::Dynamic> & trackedPreviousFeatures() const;
     const Eigen::Matrix<double, 2, Eigen::Dynamic> & trackedCurrentFeatures() const;
     const std::vector<unsigned char> & inlierMask() const;
+    
+    void update(SystemBase & system) override;
+
 protected:
     const Camera & camera_;
 

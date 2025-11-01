@@ -21,9 +21,7 @@ static void plotGroundPlane(cv::Mat & img, const Eigen::Vector6d & etak, const C
 static void plotHorizon(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
 static void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
 static void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor);
-static void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak, 
-                          const std::vector<DJIVideoCaption> & djiVideoCaption, 
-                          int frameIndex, int scenario);
+static void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak, const std::vector<DJIVideoCaption> & djiVideoCaption, int frameIndex, int scenario);
 void runVisualNavigationFromVideo(
     const std::filesystem::path & videoPath, 
     const std::filesystem::path & cameraPath, 
@@ -40,15 +38,14 @@ void runVisualNavigationFromVideo(
     // Subtitle path for Scenario 4
     std::filesystem::path subtitlePath;
     std::vector<DJIVideoCaption> djiVideoCaption;
-    if (scenario == 4)
-    {
-        subtitlePath = videoPath.parent_path() / (videoPath.stem().string() + ".SRT");
-        assert(std::filesystem::exists(subtitlePath));
-        std::println("Subtitle file: {}", subtitlePath.string());
-        
-        // Load and parse subtitle file
-        djiVideoCaption = getVideoCaptions(subtitlePath);
-    }
+
+    subtitlePath = videoPath.parent_path() / (videoPath.stem().string() + ".SRT");
+    assert(std::filesystem::exists(subtitlePath));
+    std::println("Subtitle file: {}", subtitlePath.string());
+    
+    // Load and parse subtitle file
+    djiVideoCaption = getVideoCaptions(subtitlePath);
+
 
     // Output video path
     std::filesystem::path outputPath;
@@ -118,7 +115,7 @@ void runVisualNavigationFromVideo(
     eta0.setZero();
     
     // Set initial pose from GPS (if available)
-    if (scenario == 4 && !djiVideoCaption.empty())
+    if (!djiVideoCaption.empty())
     {
         Eigen::Vector6d initialPose = getInitialPose(djiVideoCaption[0]);
         eta0.segment<6>(6) = initialPose;   // eta = initial pose
@@ -129,11 +126,12 @@ void runVisualNavigationFromVideo(
     Eigen::MatrixXd P0 = Eigen::MatrixXd::Identity(18, 18);
     P0.block<3,3>(0,0) *= 3.0;      // velocity uncertainty (small)
     P0.block<3,3>(3,3) *= 3.0;      // angular velocity uncertainty (small)
-    P0.block<3,3>(6,6) *= 0.001;      // position uncertainty
-    P0.block<3,3>(9,9) *= 0.001;      // orientation uncertainty
+    P0.block<3,3>(6,6) *= 0.01;      // position uncertainty
+    P0.block<3,3>(9,9) *= 0.01;      // orientation uncertainty
     P0.block<6,6>(12,12) *= 5.0;   // zeta uncertainty (large initially)
     
     GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(eta0, P0);
+    // eta0.segment<6>(12) = eta0.segment<6>(6);
     SystemVisualNav system(initialDensity);
     
     // Feature tracking state (similar to visual odometry)
@@ -143,7 +141,7 @@ void runVisualNavigationFromVideo(
     
     // Variables for plotting
     Eigen::Vector6d etakm1;
-    if (scenario == 4 && !djiVideoCaption.empty())
+    if (!djiVideoCaption.empty())
     {
         etakm1 = getInitialPose(djiVideoCaption[0]);
     }
@@ -153,7 +151,6 @@ void runVisualNavigationFromVideo(
     }
 
     std::println("Starting visual navigation...");
-    const double altitudeChangeTolerance = 1.0; // only update altimeter measurement if altitude changes by more than this amount
     double previousAltitude = -1.0;
     // Main Processing Loop 
     int k = 0;
@@ -174,42 +171,54 @@ void runVisualNavigationFromVideo(
             if (k > 0)
             {
                 std::println("\n=== Frame {} (t = {:.3f}s) ===", i, time);
-                // Altimeter Measurement Update
-                if (scenario == 4 && i < djiVideoCaption.size())
+
+                // Decide measurements present this timestamp
+                bool haveFlow = true; // flow bundle is processed each keyframe below
+                bool haveAlt = false;
+                double currentAltitude = 0.0;
+                if (i < static_cast<int>(djiVideoCaption.size()) && k > 0)
                 {
-                    double currentAltitude = djiVideoCaption[i].altitude;
-                    if (previousAltitude < 0 || std::abs(currentAltitude - previousAltitude) > altitudeChangeTolerance)
+                    currentAltitude = djiVideoCaption[i].altitude;
+                    if (previousAltitude < 0 || currentAltitude != previousAltitude)
                     {
-                        std::println("Altimeter update: altitude = {:.3f}m (change: {:.3f}m)", currentAltitude, currentAltitude - previousAltitude);
-                        Eigen::VectorXd y_alt(1);
-                        y_alt(0) = currentAltitude - 7.0; // apply scale
-                        // create altimeter measurement
-                        MeasurementAltimeter measAlt(time, y_alt);
-                        // Altimeter is NOT a flow event - don't clone zeta
-                        system.setFlowEvent(false);
-                        // measurement update
-                        measAlt.process(system);
-                        // set our previous altitude to the current altitude
-                        previousAltitude = currentAltitude;
-                    }         
-                }       
+                        haveAlt = true;
+                    }
+                }
+
+                // Mark frame as a flow frame (drives cloning once in predict(dt>0))
+                system.setFlowEvent(haveFlow);
+
+                // Altimeter first (if present) – this will call predict(dt>0)
+                if (haveAlt)
+                {
+                    std::println("Altimeter update: altitude = {:.3f}m (change: {:.3f}m)", currentAltitude, currentAltitude - previousAltitude);
+                    Eigen::VectorXd y_alt(1);
+                    y_alt(0) = currentAltitude - 7.0; // apply scale
+                    MeasurementAltimeter measAlt(time, y_alt);
+                    measAlt.process(system);
+                    Eigen::VectorXd x = system.density.mean();
+                    std::cout << "altimeter update done" << std::endl;
+                    std::cout << "state after measurement: " << x.transpose() << std::endl;
+                    previousAltitude = currentAltitude;
+                }
                 // Flow Bundle Measurement Update
                 MeasurementOutdoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
-                
-                // Flow bundle IS a flow event - clone zeta from eta
-                system.setFlowEvent(true);
                 
                 // Update system with measurement
                 Eigen::VectorXd x = system.density.mean();
                 Eigen::Vector6d etak = x.segment<6>(6);  // Current pose eta[k]
                 Eigen::Vector6d zetak = x.segment<6>(12);  // Current pose zeta[k]
 
+                // Second measurement at same timestamp: predict(dt==0) → identity (no clone)
                 measFlow.process(system);
+                // log 'flow bundle update done'
+                std::cout << "flow bundle update done" << std::endl;
                 
                 // Update state after measurement
                 x = system.density.mean();
                 etak = x.segment<6>(6);
                 zetak = x.segment<6>(12);
+                std::cout << "state after measurement: " << x.transpose() << std::endl;
 
                 // Get tracked features for next iteration
                 rQOikm1 = measFlow.trackedPreviousFeatures();
@@ -504,7 +513,7 @@ void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak,
                cv::FONT_HERSHEY_SIMPLEX, fontScale, blueColor, thickness, cv::LINE_AA);
     
     // Display measured altitude from GPS (green) if available
-    if (scenario == 4 && frameIndex < djiVideoCaption.size())
+    if (frameIndex < static_cast<int>(djiVideoCaption.size()))
     {
         textY += lineSpacing;
         double measuredAltitude = djiVideoCaption[frameIndex].altitude - 7.0;  // Apply same scale as altimeter
