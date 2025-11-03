@@ -246,10 +246,10 @@ GaussianInfo<double> SystemVisualNav::processNoiseDensity(double dt) const
     // // TODO: Assignment(s) Tuning parameters
     const double sigma_vx = 0.5;  // m/s / sqrt(s)
     const double sigma_vy = 0.5;  // m/s / sqrt(s)
-    const double sigma_vz = 0.8;  // m/s / sqrt(s)
+    const double sigma_vz = 1.2;  // m/s / sqrt(s)
     const double sigma_p  = 0.2;  // rad/s / sqrt(s)
     const double sigma_q  = 0.2;  // rad/s / sqrt(s)
-    const double sigma_r  = 0.4;  // rad/s / sqrt(s)
+    const double sigma_r  = 1.0;  // rad/s / sqrt(s)
 
     // const double sigma_vx = 0.2;  // m/s / sqrt(s)
     // const double sigma_vy = 0.2;  // m/s / sqrt(s)

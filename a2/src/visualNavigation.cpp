@@ -326,7 +326,7 @@ Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0)
     eta0(1) = 0;      // East position
     eta0(2) = -ga;    // Down position (negative altitude)
     eta0(3) = 0;      // Roll
-    eta0(4) = 0.05;   // Pitch
+    eta0(4) = 0.04;   // Pitch
     eta0(5) = 0;
     
     return eta0;
