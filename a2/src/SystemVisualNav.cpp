@@ -244,19 +244,19 @@ GaussianInfo<double> SystemVisualNav::processNoiseDensity(double dt) const
     // SQ is an upper triangular matrix such that SQ.'*SQ = Q is the power spectral density of the continuous time process noise
 
     // // TODO: Assignment(s) Tuning parameters
-    const double sigma_vx = 0.5;  // m/s / sqrt(s)
-    const double sigma_vy = 0.5;  // m/s / sqrt(s)
-    const double sigma_vz = 1.2;  // m/s / sqrt(s)
+    // best
+    const double sigma_vx = 2.2;  // m/s / sqrt(s)
+    const double sigma_vy = 2.0;  // m/s / sqrt(s)
+    const double sigma_vz = 4.0;  // m/s / sqrt(s)
     const double sigma_p  = 0.2;  // rad/s / sqrt(s)
     const double sigma_q  = 0.2;  // rad/s / sqrt(s)
-    const double sigma_r  = 1.0;  // rad/s / sqrt(s)
-
-    // const double sigma_vx = 0.2;  // m/s / sqrt(s)
-    // const double sigma_vy = 0.2;  // m/s / sqrt(s)
-    // const double sigma_vz = 0.3;  // m/s / sqrt(s)
+    const double sigma_r  = 1.2;  // rad/s / sqrt(s)
+    // const double sigma_vx = 3.5;  // m/s / sqrt(s)
+    // const double sigma_vy = 3.0;  // m/s / sqrt(s)
+    // const double sigma_vz = 4.0;  // m/s / sqrt(s)
     // const double sigma_p  = 0.2;  // rad/s / sqrt(s)
     // const double sigma_q  = 0.2;  // rad/s / sqrt(s)
-    // const double sigma_r  = 0.4;  // rad/s / sqrt(s)
+    // const double sigma_r  = 1.2;  // rad/s / sqrt(s)
 
     Eigen::Matrix<double, 6, 6> SQ = Eigen::Matrix<double, 6, 6>::Zero();
     SQ(0,0) = sigma_vx;
@@ -266,7 +266,6 @@ GaussianInfo<double> SystemVisualNav::processNoiseDensity(double dt) const
     SQ(4,4) = sigma_q;
     SQ(5,5) = sigma_r;
     
-
     // Distribution of noise increment dw ~ N(0, Q*dt) for time increment dt
     return GaussianInfo<double>::fromSqrtMoment(SQ*std::sqrt(dt));
 }

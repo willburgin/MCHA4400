@@ -26,7 +26,7 @@ MeasurementOutdoorFlowBundle::MeasurementOutdoorFlowBundle(double time, const Ca
     , mask_()
     , pkm1_()
     , pk_()
-    , sigma_(2.0) // TODO: Assignment(s)
+    , sigma_(1.0) // TODO: Assignment(s)
 {
     // TODO: Assignment(s)
     // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;

@@ -118,19 +118,134 @@ double MeasurementSLAMIdenticalTagBundle::logLikelihood(const Eigen::VectorXd & 
     return val(logLik_dual);
 }
 
-void MeasurementSLAMIdenticalTagBundle::update(SystemBase & system)
+void MeasurementIdenticalTagBundle::update(SystemBase & system)
 {
     SystemVisualNav & systemVisualNav = dynamic_cast<SystemVisualNav &>(system);
     
-    // associate detected features with existing landmarks
-    std::vector<std::size_t> idxLandmarks;
-    for (std::size_t i = 0; i < systemVisualNav.numberLandmarks(); ++i) 
-    {
-        idxLandmarks.push_back(i);
-    }
-    idxFeatures_ = associate(systemVisualNav, idxLandmarks);
+    // Get current state estimate
+    Eigen::VectorXd x = systemVisualNav.density.mean();
+    Eigen::Vector3d rCNn = systemVisualNav.cameraPositionDensity(camera_).mean();
+    Eigen::Vector3d Thetanc = systemVisualNav.cameraOrientationEulerDensity(camera_).mean();
+    Eigen::Matrix3d Rnc = rpy2rot(Thetanc);
     
-    // measurement update with associated detections
+    // Filter to only visible landmarks using FOV check
+    visibleLandmarks_.clear();
+    for (std::size_t i = 0; i < systemVisualNav.numberLandmarks(); ++i)
+    {
+        std::size_t idx = systemVisualNav.landmarkPositionIndex(i);
+        Eigen::Vector3d rJNn = x.segment<3>(idx);
+        
+        // Transform to camera frame (use landmark position, not orientation for FOV check)
+        Eigen::Vector3d rJCc = Rnc.transpose() * (rJNn - rCNn);
+        
+        // Check if in front of camera and within FOV
+        if (rJCc(2) > 0.0) {
+            cv::Vec3d rJCc_cv(rJCc(0), rJCc(1), rJCc(2));
+            if (camera_.isVectorWithinFOV(rJCc_cv)) {
+                visibleLandmarks_.push_back(i);
+            }
+        }
+    }
+    
+    // Associate detected tags with visible landmarks
+    idxFeatures_ = associate(systemVisualNav, visibleLandmarks_);
+    
+    // Find which detections are already associated
+    std::vector<bool> detectionUsed(frameMarkerCorners_.size(), false);
+    for (int idx : idxFeatures_) {
+        if (idx >= 0) {
+            detectionUsed[idx] = true;
+        }
+    }
+    
+    // Loop over all detected tags and initialize new landmarks for unassociated detections
+    for (std::size_t detectionIdx = 0; detectionIdx < frameMarkerCorners_.size(); ++detectionIdx)
+    {
+        if (!detectionUsed[detectionIdx])
+        {
+            // Get the 4 corners for this detection
+            std::vector<cv::Point2f> imageCorners;
+            for (int c = 0; c < 4; ++c) {
+                imageCorners.push_back(cv::Point2f(Y_(2*c, detectionIdx), Y_(2*c+1, detectionIdx)));
+            }
+            
+            // Filter 1: Check if any corner is too close to image border
+            double borderMargin = 50.0;  // pixels
+            bool tooCloseToEdge = false;
+            for (const auto& corner : imageCorners) {
+                if (corner.x < borderMargin || 
+                    corner.x > camera_.imageSize.width - borderMargin ||
+                    corner.y < borderMargin || 
+                    corner.y > camera_.imageSize.height - borderMargin) {
+                    tooCloseToEdge = true;
+                    break;
+                }
+            }
+            
+            if (tooCloseToEdge) {
+                continue;
+            }
+            
+            // Get body pose for transformation
+            Eigen::Vector3d rBNn = systemVisualNav.density.mean().segment<3>(6);
+            Eigen::Vector3d Thetanb = systemVisualNav.density.mean().segment<3>(9);
+            Pose<double> Tnb(rpy2rot(Thetanb), rBNn);
+            
+            // Define marker corners in marker frame (edge length = 166mm)
+            double l_half = 0.166 / 2.0;
+            std::vector<cv::Point3f> markerCorners3D = {
+                cv::Point3f(-l_half,  l_half, 0.0f),
+                cv::Point3f( l_half,  l_half, 0.0f),
+                cv::Point3f( l_half, -l_half, 0.0f),
+                cv::Point3f(-l_half, -l_half, 0.0f)
+            };
+            
+            // Solve PnP to get marker pose relative to camera
+            cv::Mat rvec, tvec;
+            bool success = cv::solvePnP(markerCorners3D, imageCorners, 
+                                       camera_.cameraMatrix, camera_.distCoeffs, 
+                                       rvec, tvec, false, cv::SOLVEPNP_IPPE_SQUARE);
+            
+            if (!success) {
+                std::cout << "PnP failed for detection " << detectionIdx << std::endl;
+                continue;
+            }
+            
+            // Convert to pose in world frame
+            Pose<double> Tcj(rvec, tvec);  
+            Pose<double> Tnj = Tnb * camera_.Tbc * Tcj; 
+            
+            // Extract position and orientation
+            Eigen::Vector3d posInit = Tnj.translationVector;
+            Eigen::Vector3d oriInit = rot2rpy(Tnj.rotationMatrix);
+            
+                        
+            // Create landmark state: [position, orientation]
+            Eigen::VectorXd mu_new(6);
+            mu_new << posInit, oriInit;
+            
+            // Set prior information (tune epsilon based on PnP accuracy)
+            double epsilon = 10.0;  
+            Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(6, 6);
+            Eigen::VectorXd nu_new = Xi_new * mu_new;
+            
+            // Add new landmark to the map
+            GaussianInfo<double> newLandmarkDensity = 
+                GaussianInfo<double>::fromSqrtInfo(nu_new, Xi_new);
+            systemVisualNav.density *= newLandmarkDensity;
+            
+            std::cout << "Initialized new tag landmark #" << systemVisualNav.numberLandmarks() - 1
+                      << " at position: " << posInit.transpose() 
+                      << " (depth: " << posInit(2) << " m)" << std::endl;
+            
+            // Add newly initialized landmark to tracking lists
+            std::size_t newLandmarkIdx = systemVisualNav.numberLandmarks() - 1;
+            visibleLandmarks_.push_back(newLandmarkIdx);
+            idxFeatures_.push_back(static_cast<int>(detectionIdx));
+        }
+    }
+    
+    // Perform measurement update with all associated detections
     Measurement::update(system);
 }
 
@@ -354,7 +469,12 @@ GaussianInfo<double> MeasurementSLAMIdenticalTagBundle::predictFeatureBundleDens
 
 const std::vector<int> & MeasurementSLAMIdenticalTagBundle::associate(const SystemVisualNav & system, const std::vector<std::size_t> & idxLandmarks)
 {
-    const SystemVisualNav & systemVisualNav = dynamic_cast<const SystemVisualNav &>(system);
-    
+    // guard to prevent snn being called with an empty idxLandmarks
+    if (idxLandmarks.empty()) {
+        idxFeatures_.clear();
+        return idxFeatures_;
+    }
+    GaussianInfo<double> featureBundleDensity = predictFeatureBundleDensity(system, idxLandmarks);
+    snn(system, featureBundleDensity, idxLandmarks, Y_, camera_, idxFeatures_);
     return idxFeatures_;
 }

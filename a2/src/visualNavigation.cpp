@@ -2,6 +2,8 @@
 #include <numbers>
 #include <filesystem>
 #include <Eigen/Core>
+#include <vector>
+#include <deque>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -22,6 +24,12 @@ static void plotHorizon(cv::Mat & img, const Eigen::Vector6d & etak, const Camer
 static void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camera & camera, const int & divisor);
 static void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor);
 static void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak, const std::vector<DJIVideoCaption> & djiVideoCaption, int frameIndex, int scenario);
+static void plotTrajectory2D(cv::Mat & img, const Eigen::Vector6d & etak, const std::vector<DJIVideoCaption> & djiVideoCaption, int frameIndex);
+static std::deque<Eigen::Vector2d> estimatedTraj;
+static std::deque<Eigen::Vector2d> gpsTraj;
+static cv::Mat trajImg;
+static Eigen::Vector2d gpsOrigin(0, 0);
+static bool gpsOriginSet = false;
 void runVisualNavigationFromVideo(
     const std::filesystem::path & videoPath, 
     const std::filesystem::path & cameraPath, 
@@ -110,27 +118,42 @@ void runVisualNavigationFromVideo(
         bufferedVideoWriter.start(videoOut);
     }
     
-    // Initialize state: [nu(6); eta(6); zeta(6)] = 18 dimensions
-    Eigen::VectorXd eta0(18);
-    eta0.setZero();
-    
-    // Set initial pose from GPS (if available)
-    if (!djiVideoCaption.empty())
-    {
-        Eigen::Vector6d initialPose = getInitialPose(djiVideoCaption[0]);
-        eta0.segment<6>(6) = initialPose;   // eta = initial pose
-        eta0.segment<6>(12) = initialPose;  // zeta = initial pose (cloned)
-    }
-    
-    // Set initial uncertainties
-    Eigen::MatrixXd P0 = Eigen::MatrixXd::Identity(18, 18);
-    P0.block<3,3>(0,0) *= 5.0;      // velocity uncertainty (small)
-    P0.block<3,3>(3,3) *= 5.0;      // angular velocity uncertainty (small)
-    P0.block<3,3>(6,6) *= 0.01;      // position uncertainty
-    P0.block<3,3>(9,9) *= 0.01;      // orientation uncertainty
-    P0.block<6,6>(12,12) *= 5.0;   // zeta uncertainty (large initially)
-    
-    GaussianInfo<double> initialDensity = GaussianInfo<double>::fromSqrtMoment(eta0, P0);
+
+    Eigen::Vector6d initialPose = getInitialPose(djiVideoCaption[0]);
+
+    // Define transformation from z to x
+    auto phimap = [](const Eigen::VectorXd& z, Eigen::MatrixXd& J) {
+        Eigen::VectorXd x(18);
+        x.segment<6>(0) = z.segment<6>(0);   // nu
+        x.segment<6>(6) = z.segment<6>(6);   // eta
+        x.segment<6>(12) = z.segment<6>(6);  // zeta = eta initially
+        
+        // Jacobian: dx/dz
+        J.resize(18, 12);
+        J.setZero();
+        J.block<6,6>(0,0).setIdentity();   // dnu/dnu = I
+        J.block<6,6>(6,6).setIdentity();   // deta/deta = I
+        J.block<6,6>(12,6).setIdentity();  // dzeta/deta = I (since zeta=eta)
+        
+        return x;
+    };
+
+    // Start with 12-dim uncertainty on [nu; eta]
+    Eigen::VectorXd z0(12);
+    z0.segment<6>(0).setZero();  // nu = 0
+    z0.segment<6>(6) = initialPose;  // eta from GPS
+
+    Eigen::MatrixXd Pz(12, 12);
+    Pz.setZero();
+    Pz.block<3,3>(0,0) = 2.0 * Eigen::Matrix3d::Identity();  // velocity uncertainty
+    Pz.block<3,3>(3,3) = 2.0 * Eigen::Matrix3d::Identity();  // angular velocity
+    Pz.block<3,3>(6,6) = 0.001 * Eigen::Matrix3d::Identity(); // position
+    Pz.block<3,3>(9,9) = 0.001 * Eigen::Matrix3d::Identity(); // orientation
+
+    GaussianInfo<double> densityZ = GaussianInfo<double>::fromSqrtMoment(z0, Pz);
+
+    // Transform to 18-dim with proper correlations
+    GaussianInfo<double> initialDensity = densityZ.affineTransform(phimap);
     SystemVisualNav system(initialDensity);
     
     // Feature tracking state (similar to visual odometry)
@@ -276,6 +299,7 @@ void runVisualNavigationFromVideo(
                 plotCompass(imgout, etak, camera, divisor);
                 plotTransVelocity(imgout, x, etak, etakm1, camera, divisor);
                 plotStateInfo(imgout, etak, djiVideoCaption, i, scenario);
+                plotTrajectory2D(imgout, etak, djiVideoCaption, i);
 
                 // Display
                 cv::imshow("Visual Navigation", imgout);
@@ -327,7 +351,7 @@ Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0)
     eta0(2) = -ga;    // Down position (negative altitude)
     eta0(3) = 0;      // Roll
     eta0(4) = 0.04;   // Pitch
-    eta0(5) = 0;
+    eta0(5) = -1.05;
     
     return eta0;
 }
@@ -582,4 +606,112 @@ void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Ve
         cv::putText(img, "Velocity (State)", velocity_point + cv::Point2d(15, 5),
                     cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
     }
+}
+
+static Eigen::Vector2d gpsToNED(double lat, double lon, double alt)
+{
+    if (!gpsOriginSet) return Eigen::Vector2d(0, 0);
+    
+    double lat0 = gpsOrigin(0) * M_PI / 180.0;
+    double lon0 = gpsOrigin(1) * M_PI / 180.0;
+    double lat_rad = lat * M_PI / 180.0;
+    double lon_rad = lon * M_PI / 180.0;
+    
+    double north = (lat_rad - lat0) * 6378137.0;
+    double east = (lon_rad - lon0) * 6378137.0 * std::cos(lat0);
+    
+    return Eigen::Vector2d(north, east);
+}
+// Add this function with your other plot functions
+void plotTrajectory2D(cv::Mat & img, const Eigen::Vector6d & etak, 
+                      const std::vector<DJIVideoCaption> & djiVideoCaption, 
+                      int frameIndex)
+{
+    // Initialize trajectory image if needed
+    if (trajImg.empty())
+    {
+        trajImg = cv::Mat(600, 800, CV_8UC3, cv::Scalar(255, 255, 255));
+    }
+    
+    // Set GPS origin from first frame
+    if (!gpsOriginSet && !djiVideoCaption.empty())
+    {
+        gpsOrigin(0) = djiVideoCaption[0].latitude;
+        gpsOrigin(1) = djiVideoCaption[0].longitude;
+        gpsOriginSet = true;
+    }
+    
+    // Add current estimated position
+    estimatedTraj.push_back(Eigen::Vector2d(etak(0), etak(1)));
+    
+    // Add current GPS position
+    if (frameIndex < static_cast<int>(djiVideoCaption.size()))
+    {
+        Eigen::Vector2d gpsNED = gpsToNED(djiVideoCaption[frameIndex].latitude,
+                                          djiVideoCaption[frameIndex].longitude,
+                                          djiVideoCaption[frameIndex].altitude);
+        gpsTraj.push_back(gpsNED);
+    }
+    
+    // Clear image
+    trajImg.setTo(cv::Scalar(255, 255, 255));
+    
+    // FIXED scale - centered at origin
+    double centerN = 0.0;
+    double centerE = 0.0;
+    double scale = 3.0;  // meters per pixel (increase to zoom out)
+    
+    // Convert NED to pixel
+    auto nedToPixel = [&](double north, double east) -> cv::Point {
+        int x = trajImg.cols/2 + (east - centerE) / scale;
+        int y = trajImg.rows/2 - (north - centerN) / scale;
+        return cv::Point(x, y);
+    };
+    
+    // Draw grid
+    cv::Scalar gridColor(230, 230, 230);
+    for (int i = -2000; i <= 2000; i += 100)
+    {
+        cv::line(trajImg, nedToPixel(i, -2000), nedToPixel(i, 2000), gridColor, 1);
+        cv::line(trajImg, nedToPixel(-2000, i), nedToPixel(2000, i), gridColor, 1);
+    }
+    
+    // Draw axes
+    cv::line(trajImg, nedToPixel(0, -2000), nedToPixel(0, 2000), cv::Scalar(180, 180, 180), 2);
+    cv::line(trajImg, nedToPixel(-2000, 0), nedToPixel(2000, 0), cv::Scalar(180, 180, 180), 2);
+    
+    // Draw GPS trajectory (green)
+    for (size_t i = 1; i < gpsTraj.size(); ++i)
+    {
+        cv::Point p1 = nedToPixel(gpsTraj[i-1](0), gpsTraj[i-1](1));
+        cv::Point p2 = nedToPixel(gpsTraj[i](0), gpsTraj[i](1));
+        cv::line(trajImg, p1, p2, cv::Scalar(0, 200, 0), 2, cv::LINE_AA);
+    }
+    
+    // Draw estimated trajectory (blue)
+    for (size_t i = 1; i < estimatedTraj.size(); ++i)
+    {
+        cv::Point p1 = nedToPixel(estimatedTraj[i-1](0), estimatedTraj[i-1](1));
+        cv::Point p2 = nedToPixel(estimatedTraj[i](0), estimatedTraj[i](1));
+        cv::line(trajImg, p1, p2, cv::Scalar(255, 0, 0), 2, cv::LINE_AA);
+    }
+    
+    // Draw current positions
+    if (!gpsTraj.empty())
+    {
+        cv::Point gp = nedToPixel(gpsTraj.back()(0), gpsTraj.back()(1));
+        cv::circle(trajImg, gp, 5, cv::Scalar(0, 200, 0), -1);
+    }
+    if (!estimatedTraj.empty())
+    {
+        cv::Point ep = nedToPixel(estimatedTraj.back()(0), estimatedTraj.back()(1));
+        cv::circle(trajImg, ep, 5, cv::Scalar(255, 0, 0), -1);
+    }
+    
+    // Draw legend
+    cv::putText(trajImg, "GPS", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 200, 0), 2);
+    cv::putText(trajImg, "Est", cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 0, 0), 2);
+    
+    // Show
+    cv::imshow("Trajectory 2D", trajImg);
 }
