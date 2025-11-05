@@ -13,9 +13,14 @@
 #include "rotation.hpp"
 #include "GaussianInfo.hpp"
 #include "SystemVisualNav.h"
+#include "SystemVisualNavPoseLandmarks.h"
 #include "MeasurementOutdoorFlowBundle.h"
+#include "MeasurementIndoorFlowBundle.h"
 #include "visualNavigation.h"
 #include "MeasurementAltimeter.h"
+#include "MeasurementSLAMIdenticalTagBundle.h"
+#include "imagefeatures.h"
+#include "Plot.h"
 
 // Forward declarations (reuse from visual odometry)
 static Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0);
@@ -30,6 +35,7 @@ static std::deque<Eigen::Vector2d> gpsTraj;
 static cv::Mat trajImg;
 static Eigen::Vector2d gpsOrigin(0, 0);
 static bool gpsOriginSet = false;
+
 void runVisualNavigationFromVideo(
     const std::filesystem::path & videoPath, 
     const std::filesystem::path & cameraPath, 
@@ -37,23 +43,29 @@ void runVisualNavigationFromVideo(
     int interactive, 
     const std::filesystem::path & outputDirectory)
 {
+    int imgModulus = 1;
     // TODO: Tune these parameters
-    int imgModulus  = 10;        // Take frames divisible by this number
+    if (scenario == 4) {
+        imgModulus  = 10;        // Take frames divisible by this number
+    } else if (scenario == 5) {
+        imgModulus  = 1;
+    }
     int divisor     = 2;         // Image scaling factor (used for plotting only)
 
     assert(!videoPath.empty());
 
-    // Subtitle path for Scenario 4
+    // Subtitle path and GPS data (Scenario 4 only)
     std::filesystem::path subtitlePath;
     std::vector<DJIVideoCaption> djiVideoCaption;
 
-    subtitlePath = videoPath.parent_path() / (videoPath.stem().string() + ".SRT");
-    assert(std::filesystem::exists(subtitlePath));
-    std::println("Subtitle file: {}", subtitlePath.string());
-    
-    // Load and parse subtitle file
-    djiVideoCaption = getVideoCaptions(subtitlePath);
-
+    if (scenario == 4) {
+        subtitlePath = videoPath.parent_path() / (videoPath.stem().string() + ".SRT");
+        assert(std::filesystem::exists(subtitlePath));
+        std::println("Subtitle file: {}", subtitlePath.string());
+        
+        // Load and parse subtitle file
+        djiVideoCaption = getVideoCaptions(subtitlePath);
+    }
 
     // Output video path
     std::filesystem::path outputPath;
@@ -101,7 +113,7 @@ void runVisualNavigationFromVideo(
     std::println("Input video dimensions: [{} x {}]",
                 cap.get(cv::CAP_PROP_FRAME_WIDTH),
                 cap.get(cv::CAP_PROP_FRAME_HEIGHT));
-
+    std::println("BufferedVideoReader created");
     BufferedVideoReader bufferedVideoReader(5);
     bufferedVideoReader.start(cap);
 
@@ -118,8 +130,13 @@ void runVisualNavigationFromVideo(
         bufferedVideoWriter.start(videoOut);
     }
     
-
-    Eigen::Vector6d initialPose = getInitialPose(djiVideoCaption[0]);
+    Eigen::Vector6d initialPose;
+    if (scenario == 4) {
+        initialPose = getInitialPose(djiVideoCaption[0]);
+    } else {
+        // Scenario 5: Indoor, start at origin
+        initialPose.setZero();
+    }
 
     // Define transformation from z to x
     auto phimap = [](const Eigen::VectorXd& z, Eigen::MatrixXd& J) {
@@ -145,16 +162,41 @@ void runVisualNavigationFromVideo(
 
     Eigen::MatrixXd Pz(12, 12);
     Pz.setZero();
-    Pz.block<3,3>(0,0) = 2.0 * Eigen::Matrix3d::Identity();  // velocity uncertainty
-    Pz.block<3,3>(3,3) = 2.0 * Eigen::Matrix3d::Identity();  // angular velocity
-    Pz.block<3,3>(6,6) = 0.001 * Eigen::Matrix3d::Identity(); // position
-    Pz.block<3,3>(9,9) = 0.001 * Eigen::Matrix3d::Identity(); // orientation
+    if (scenario == 4) {
+        Pz.block<3,3>(0,0) = 2.0 * Eigen::Matrix3d::Identity();  // velocity uncertainty
+        Pz.block<3,3>(3,3) = 2.0 * Eigen::Matrix3d::Identity();  // angular velocity
+        Pz.block<3,3>(6,6) = 0.001 * Eigen::Matrix3d::Identity(); // position
+        Pz.block<3,3>(9,9) = 0.001 * Eigen::Matrix3d::Identity(); // orientation
+    } else if (scenario == 5) {
+        std::println("Pz created");
+        Pz.block<3,3>(0,0) = 0.3 * Eigen::Matrix3d::Identity();  // velocity uncertainty
+        Pz.block<3,3>(3,3) = 0.3 * Eigen::Matrix3d::Identity();  // angular velocity
+        Pz.block<3,3>(6,6) = 0.01 * Eigen::Matrix3d::Identity(); // position
+        Pz.block<3,3>(9,9) = 0.01 * Eigen::Matrix3d::Identity(); // orientation
+    }
 
     GaussianInfo<double> densityZ = GaussianInfo<double>::fromSqrtMoment(z0, Pz);
 
     // Transform to 18-dim with proper correlations
     GaussianInfo<double> initialDensity = densityZ.affineTransform(phimap);
-    SystemVisualNav system(initialDensity);
+    
+    // Create system based on scenario
+    std::unique_ptr<SystemVisualNav> systemPtr;
+    if (scenario == 4) {
+        systemPtr = std::make_unique<SystemVisualNav>(initialDensity);
+    } else if (scenario == 5) {
+        systemPtr = std::make_unique<SystemVisualNavPoseLandmarks>(initialDensity);
+    }
+    std::unique_ptr<MeasurementSLAMIdenticalTagBundle> measTags;
+    SystemVisualNav & system = *systemPtr;
+    
+    // Create Plot for scenario 5
+    std::unique_ptr<Plot> plot;
+    if (scenario == 5) {
+        std::println("Plot created");
+        plot = std::make_unique<Plot>(camera);
+        // plot->start();
+    }
     
     // Feature tracking state (similar to visual odometry)
     cv::Mat imgk_raw;
@@ -172,8 +214,9 @@ void runVisualNavigationFromVideo(
         etakm1.setZero();
     }
 
-    std::println("Starting visual navigation...");
+    std::println("Starting visual navigation (Scenario {})...", scenario);
     double previousAltitude = -1.0;
+    
     // Main Processing Loop 
     int k = 0;
     for (int i = 0;; ++i)
@@ -193,133 +236,228 @@ void runVisualNavigationFromVideo(
             if (k > 0)
             {
                 std::println("\n=== Frame {} (t = {:.3f}s) ===", i, time);
-
-                // Decide measurements present this timestamp
-                bool haveFlow = true; // flow bundle is processed each keyframe below
-                bool haveAlt = false;
-                double currentAltitude = 0.0;
-                if (i < static_cast<int>(djiVideoCaption.size()) && k > 0)
-                {
-                    currentAltitude = djiVideoCaption[i].altitude;
-                    if (previousAltitude < 0 || currentAltitude != previousAltitude)
-                    {
-                        haveAlt = true;
-                    }
-                }
-
-                // Mark frame as a flow frame (drives cloning once in predict(dt>0))
-                system.setFlowEvent(haveFlow);
-
-                // Altimeter first (if present) – this will call predict(dt>0)
-                if (haveAlt)
-                {
-                    std::println("Altimeter update: altitude = {:.3f}m (change: {:.3f}m)", currentAltitude, currentAltitude - previousAltitude);
-                    Eigen::VectorXd y_alt(1);
-                    y_alt(0) = currentAltitude - 7.0; // apply scale
-                    MeasurementAltimeter measAlt(time, y_alt);
-                    measAlt.process(system);
-                    Eigen::VectorXd x = system.density.mean();
-                    std::cout << "altimeter update done" << std::endl;
-                    std::cout << "state after measurement: " << x.transpose() << std::endl;
-                    previousAltitude = currentAltitude;
-                }
-                // Flow Bundle Measurement Update
-                MeasurementOutdoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
-                
-                // Update system with measurement
-                Eigen::VectorXd x = system.density.mean();
-                Eigen::Vector6d etak = x.segment<6>(6);  // Current pose eta[k]
-                Eigen::Vector6d zetak = x.segment<6>(12);  // Current pose zeta[k]
-
-                // Second measurement at same timestamp: predict(dt==0) → identity (no clone)
-                measFlow.process(system);
-                // log 'flow bundle update done'
-                std::cout << "flow bundle update done" << std::endl;
-                
-                // Update state after measurement
-                x = system.density.mean();
-                etak = x.segment<6>(6);
-                zetak = x.segment<6>(12);
-                std::cout << "state after measurement: " << x.transpose() << std::endl;
-
-                // Get tracked features for next iteration
-                rQOikm1 = measFlow.trackedPreviousFeatures();
-                const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik = measFlow.trackedCurrentFeatures();
-                
-                // Visualization
-                // Prepare output image (scaled)
                 cv::Mat imgout;
-                cv::resize(imgk_raw, imgout, cv::Size(), 1.0/divisor, 1.0/divisor);
-                
-                // Get predicted flow field for visualization
-                Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = measFlow.predictedFeatures(x, system);
-                
-                // Scale feature coordinates for plotting
-                std::vector<cv::Point2d> rQOikm1_scaled, rQOik_scaled, rQOik_hat_scaled;
-                int np = rQOik.cols();
-                rQOikm1_scaled.resize(np);
-                rQOik_scaled.resize(np);
-                rQOik_hat_scaled.resize(np);
-                for (int j = 0; j < np; ++j)
-                {
-                    rQOikm1_scaled[j].x     = rQOikm1(0, j)/divisor;
-                    rQOikm1_scaled[j].y     = rQOikm1(1, j)/divisor;
-
-                    rQOik_scaled[j].x       = rQOik(0, j)/divisor;
-                    rQOik_scaled[j].y       = rQOik(1, j)/divisor;
-
-                    rQOik_hat_scaled[j].x   = rQOik_hat(0, j)/divisor;
-                    rQOik_hat_scaled[j].y   = rQOik_hat(1, j)/divisor;
-                }
-
-                // Plot flow vectors
-                for (int j = 0; j < rQOik.cols(); ++j)
-                {
-                    // Predicted flow (blue)
-                    cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_hat_scaled[j], 
-                                   cv::Scalar(255, 0, 0), 1, cv::LINE_AA);
-
-                    if (measFlow.inlierMask()[j])
+                // SCENARIO-SPECIFIC MEASUREMENT PROCESSING
+                if (scenario == 4) {
+                    // Scenario 4: Outdoor Flow Bundle + Altimeter
+                    
+                    // Check for altimeter update
+                    bool haveFlow = true;
+                    bool haveAlt = false;
+                    double currentAltitude = 0.0;
+                    if (i < static_cast<int>(djiVideoCaption.size()) && k > 0)
                     {
-                        // Measured inliers (green)
-                        cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_scaled[j], 
-                                       cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+                        currentAltitude = djiVideoCaption[i].altitude;
+                        if (previousAltitude < 0 || currentAltitude != previousAltitude)
+                        {
+                            haveAlt = true;
+                        }
                     }
-                    else
+
+                    // Mark frame as a flow frame (drives cloning once in predict(dt>0))
+                    system.setFlowEvent(haveFlow);
+
+                    // Altimeter first (if present) – this will call predict(dt>0)
+                    if (haveAlt)
                     {
-                        // Measured outliers (red)
-                        cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_scaled[j], 
-                                       cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+                        std::println("Altimeter update: altitude = {:.3f}m (change: {:.3f}m)", currentAltitude, currentAltitude - previousAltitude);
+                        Eigen::VectorXd y_alt(1);
+                        y_alt(0) = currentAltitude - 7.0; // apply scale
+                        MeasurementAltimeter measAlt(time, y_alt);
+                        measAlt.process(system);
+                        Eigen::VectorXd x = system.density.mean();
+                        std::cout << "altimeter update done" << std::endl;
+                        std::cout << "state after measurement: " << x.transpose() << std::endl;
+                        previousAltitude = currentAltitude;
                     }
+                    
+                    // Flow Bundle
+                    MeasurementOutdoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
+                    measFlow.process(system);
+                    std::cout << "flow bundle update done" << std::endl;
+                    
+                    // Get tracked features for next iteration
+                    rQOikm1 = measFlow.trackedPreviousFeatures();
+                    const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik = measFlow.trackedCurrentFeatures();
+                    
+                    // Update state after measurement
+                    Eigen::VectorXd x = system.density.mean();
+                    Eigen::Vector6d etak = x.segment<6>(6);
+                    Eigen::Vector6d zetak = x.segment<6>(12);
+                    std::cout << "state after measurement: " << x.transpose() << std::endl;
+                    
+                    cv::resize(imgk_raw, imgout, cv::Size(), 1.0/divisor, 1.0/divisor);
+                    
+                    // Get predicted flow field for visualization
+                    Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = measFlow.predictedFeatures(x, system);
+                    
+                    // Scale feature coordinates for plotting
+                    std::vector<cv::Point2d> rQOikm1_scaled, rQOik_scaled, rQOik_hat_scaled;
+                    int np = rQOik.cols();
+                    rQOikm1_scaled.resize(np);
+                    rQOik_scaled.resize(np);
+                    rQOik_hat_scaled.resize(np);
+                    for (int j = 0; j < np; ++j)
+                    {
+                        rQOikm1_scaled[j].x     = rQOikm1(0, j)/divisor;
+                        rQOikm1_scaled[j].y     = rQOikm1(1, j)/divisor;
+
+                        rQOik_scaled[j].x       = rQOik(0, j)/divisor;
+                        rQOik_scaled[j].y       = rQOik(1, j)/divisor;
+
+                        rQOik_hat_scaled[j].x   = rQOik_hat(0, j)/divisor;
+                        rQOik_hat_scaled[j].y   = rQOik_hat(1, j)/divisor;
+                    }
+
+                    // Plot flow vectors
+                    for (int j = 0; j < rQOik.cols(); ++j)
+                    {
+                        // Predicted flow (blue)
+                        cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_hat_scaled[j], 
+                                       cv::Scalar(255, 0, 0), 1, cv::LINE_AA);
+
+                        if (measFlow.inlierMask()[j])
+                        {
+                            // Measured inliers (green)
+                            cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_scaled[j], 
+                                           cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+                        }
+                        else
+                        {
+                            // Measured outliers (red)
+                            cv::arrowedLine(imgout, rQOikm1_scaled[j], rQOik_scaled[j], 
+                                           cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
+                        }
+                    }
+
+                    // Plot overlays
+                    plotGroundPlane(imgout, etak, camera, divisor);
+                    plotHorizon(imgout, etak, camera, divisor);
+                    plotCompass(imgout, etak, camera, divisor);
+                    plotTransVelocity(imgout, x, etak, etakm1, camera, divisor);
+                    plotStateInfo(imgout, etak, djiVideoCaption, i, scenario);
+                    plotTrajectory2D(imgout, etak, djiVideoCaption, i);
+
+                    // Display
+                    cv::imshow("Visual Navigation - Scenario 4", imgout);
+                    char key = cv::waitKey(1);
+                    if (key == 'q')
+                    {
+                        std::println("Key '{}' pressed. Terminating program.", key);
+                        break;
+                    }
+
+                    // Write output frame
+                    if (doExport)
+                    {
+                        bufferedVideoWriter.write(imgout);
+                    }
+
+                    // Update for next iteration
+                    rQOikm1.resize(2, rQOik.cols());
+                    rQOikm1 = rQOik;
+                    etakm1 = etak;
                 }
-
-                // Plot overlays
-                plotGroundPlane(imgout, etak, camera, divisor);
-                plotHorizon(imgout, etak, camera, divisor);
-                plotCompass(imgout, etak, camera, divisor);
-                plotTransVelocity(imgout, x, etak, etakm1, camera, divisor);
-                plotStateInfo(imgout, etak, djiVideoCaption, i, scenario);
-                plotTrajectory2D(imgout, etak, djiVideoCaption, i);
-
-                // Display
-                cv::imshow("Visual Navigation", imgout);
-                char key = cv::waitKey(1);
-                if (key == 'q')
-                {
-                    std::println("Key '{}' pressed. Terminating program.", key);
-                    break;
+                else if (scenario == 5) {
+                    // Scenario 5: Indoor Flow + ArUco SLAM
+                    
+                    // Mark frame as a flow frame (needed for proper zeta cloning)
+                    system.setFlowEvent(true);
+                    
+                    // 1. Detect ArUco markers first
+                    ArucoDetectionResult arucoResult = detectAndDrawArUco(imgk_raw, 100);
+                    cv::Mat outputFrame = arucoResult.image.clone();  // Already has ArUco drawn on it
+                    
+                    // 2. Indoor Flow measurement
+                    MeasurementIndoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
+                    // measFlow.process(system);
+                    std::println("Flow update complete");
+                    
+                    // Get tracked features for next iteration
+                    rQOikm1 = measFlow.trackedPreviousFeatures();
+                    const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik = measFlow.trackedCurrentFeatures();
+                    
+                    // Update state after flow measurement
+                    Eigen::VectorXd x = system.density.mean();
+                    Eigen::Vector6d etak = x.segment<6>(6);
+                    
+                    // Get predicted flow field for visualization
+                    Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = measFlow.predictedFeatures(x, system);
+                    
+                    // Draw flow vectors on outputFrame (full resolution)
+                    for (int j = 0; j < rQOik.cols(); ++j)
+                    {
+                        cv::Point2f ptPrev(rQOikm1(0, j), rQOikm1(1, j));
+                        cv::Point2f ptCurr(rQOik(0, j), rQOik(1, j));
+                        cv::Point2f ptPred(rQOik_hat(0, j), rQOik_hat(1, j));
+                        
+                        // Predicted flow (blue) - thickness scaled for full resolution
+                        cv::arrowedLine(outputFrame, ptPrev, ptPred, 
+                                       cv::Scalar(255, 0, 0), divisor, cv::LINE_AA);
+                
+                        if (measFlow.inlierMask()[j])
+                        {
+                            // Measured inliers (green)
+                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
+                                           cv::Scalar(0, 255, 0), divisor, cv::LINE_AA);
+                        }
+                        else
+                        {
+                            // Measured outliers (red)
+                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
+                                           cv::Scalar(0, 0, 255), divisor, cv::LINE_AA);
+                        }
+                    }
+                    
+                    // 3. Process ArUco SLAM measurement if markers detected
+                    if (!arucoResult.markerCorners.empty())
+                    {
+                        // Format Y matrix (8 × nDetections)
+                        Eigen::Matrix<double, 8, Eigen::Dynamic> Y(8, arucoResult.markerCorners.size());
+                        for (size_t j = 0; j < arucoResult.markerCorners.size(); ++j)
+                        {
+                            for (int c = 0; c < 4; ++c)
+                            {
+                                Y(2*c, j) = arucoResult.markerCorners[j][c].x;
+                                Y(2*c+1, j) = arucoResult.markerCorners[j][c].y;
+                            }
+                        }
+                
+                        // Create and process identical tag measurement
+                        measTags = std::make_unique<MeasurementSLAMIdenticalTagBundle>(time, Y, camera);
+                        measTags->process(system);
+                        
+                        std::println("ArUco SLAM update complete");
+                        std::println("Total landmarks: {}", system.numberLandmarks());
+                        
+                        // Update Plot (this composites 3D viz with camera view)
+                        system.view() = outputFrame.clone();
+                        plot->setData(system, *measTags);
+                        plot->render();
+                    }
+                    
+                    // Handle interactive mode
+                    bool isLastFrame = (i + imgModulus >= nFrames);
+                    if (interactive == 2 || (interactive == 1 && isLastFrame))
+                    {
+                        // Start handling plot GUI events (blocking)
+                        plot->start();
+                    }
+                    
+                    // Get the final rendered frame from Plot (has everything)
+                    cv::Mat imgout = plot->getFrame();
+                    
+                    // Export frame if needed
+                    if (doExport && !imgout.empty())
+                    {
+                        bufferedVideoWriter.write(imgout);
+                    }
+                
+                    // Update for next iteration
+                    rQOikm1.resize(2, rQOik.cols());
+                    rQOikm1 = rQOik;
+                    etakm1 = etak;
                 }
-
-                // Write output frame
-                if (doExport)
-                {
-                    bufferedVideoWriter.write(imgout);
-                }
-
-                // Update for next iteration
-                rQOikm1.resize(2, rQOik.cols());
-                rQOikm1 = rQOik;
-                etakm1 = etak;
             }
 
             // Store current frame for next iteration
@@ -329,7 +467,6 @@ void runVisualNavigationFromVideo(
     }
 
     // Cleanup
-    
     if (doExport)
     {
         bufferedVideoWriter.stop();
@@ -338,6 +475,8 @@ void runVisualNavigationFromVideo(
     
     std::println("\nVisual navigation complete. Processed {} keyframes.", k);
 }
+
+// [All the plotting functions remain EXACTLY the same - copy from original]
 
 // Reuse functions from visual odometry code
 Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0)

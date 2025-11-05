@@ -80,7 +80,9 @@ MeasurementIndoorFlowBundle::MeasurementIndoorFlowBundle(double time, const Came
         int numNewFeatures = maxNumFeatures - rQOikm1_.cols();
         std::vector<cv::Point2f> rQOik_new;
         cv::goodFeaturesToTrack(imgk_scaled, rQOik_new, numNewFeatures, 0.01, 40, mask);
-        cv::cornerSubPix(imgk_scaled, rQOik_new, cv::Size(5, 5), cv::Size(-1, -1), termcrit);
+        if (!rQOik_new.empty()) {
+            cv::cornerSubPix(imgk_scaled, rQOik_new, cv::Size(5, 5), cv::Size(-1, -1), termcrit);
+        }
         std::println("Found {} new features.", rQOik_new.size());
         
         // Append new features to existing ones (as if they were in previous frame)

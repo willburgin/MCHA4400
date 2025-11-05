@@ -29,7 +29,7 @@ public:
     virtual const std::vector<int> & associate(const SystemVisualNav & system, const std::vector<std::size_t> & idxLandmarks) override;
     void setFrameMarkerIDs(const std::vector<int>& markerIDs) { frameMarkerIDs_ = markerIDs; }
     const std::vector<int>& getAssociations() const { return idxFeatures_; }
-    const std::vector<bool>& getVisibility() const { return visibleLandmarks_; }
+    const std::vector<size_t>& getVisibleLandmarks() const { return visibleLandmarks_; }
     
     // Templated log-likelihood for autodiff support (public for testing)
     template <typename Scalar>
@@ -40,7 +40,7 @@ protected:
     double sigma_;                                  // Feature error standard deviation (in pixels)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
     std::vector<int> frameMarkerIDs_;               // Marker IDs for each frame
-    std::vector<bool> visibleLandmarks_;            // Visibility status for each landmark
+    std::vector<size_t> visibleLandmarks_;            // Visibility status for each landmark
 };
 
 // Image feature location for a given landmark (ArUco marker with 4 corners)
@@ -130,10 +130,11 @@ Scalar MeasurementSLAMIdenticalTagBundle::logLikelihoodTemplated(const Eigen::Ve
     // Sum log-likelihoods over all associated feature/landmark pairs
     for (std::size_t j = 0; j < idxFeatures_.size(); ++j) {
         if (idxFeatures_[j] >= 0) {  // This landmark is associated
+            size_t landmarkIdx = visibleLandmarks_[j];
             int detectionIdx = idxFeatures_[j];
             
             // Predict all 4 corners for this landmark
-            Eigen::Matrix<Scalar, 8, 1> h_pred = predictFeature(x, systemVisualNav, j);
+            Eigen::Matrix<Scalar, 8, 1> h_pred = predictFeature(x, systemVisualNav, landmarkIdx);
             
             // Sum over all 4 corners
             for (int c = 0; c < 4; ++c) {

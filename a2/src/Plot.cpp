@@ -582,13 +582,26 @@ void Plot::render()
 
     // Get association and visibility information from measurement
     const auto* measurementTagBundle = dynamic_cast<const MeasurementSLAMIdenticalTagBundle*>(pMeasurement.get());
-    
+
     std::vector<int> associations;
     std::vector<bool> visibility;
     
     if (measurementTagBundle) {
-        associations = measurementTagBundle->getAssociations();
-        visibility = measurementTagBundle->getVisibility();
+        const auto& tagAssociations = measurementTagBundle->getAssociations();
+        const auto& visibleLandmarks = measurementTagBundle->getVisibleLandmarks();
+
+        // Initialize with all landmarks not visible and not associated
+        visibility.resize(pSystem->numberLandmarks(), false);
+        associations.resize(pSystem->numberLandmarks(), -1);
+        
+        // Map visible landmarks to global indices
+        for (size_t j = 0; j < visibleLandmarks.size(); ++j) {
+            size_t globalIdx = visibleLandmarks[j];
+            if (globalIdx < pSystem->numberLandmarks()) {
+                visibility[globalIdx] = true;
+                associations[globalIdx] = tagAssociations[j];
+            }
+        }
     }
 
     for (std::size_t i = 0; i < pSystem->numberLandmarks(); ++i)
