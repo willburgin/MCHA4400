@@ -14,11 +14,13 @@
 #include "GaussianInfo.hpp"
 #include "SystemVisualNav.h"
 #include "SystemVisualNavPoseLandmarks.h"
+#include "SystemVisualNavPointLandmarks.h"
 #include "MeasurementOutdoorFlowBundle.h"
 #include "MeasurementIndoorFlowBundle.h"
 #include "visualNavigation.h"
 #include "MeasurementAltimeter.h"
 #include "MeasurementSLAMIdenticalTagBundle.h"
+#include "MeasurementSLAMPointBundle.h"
 #include "imagefeatures.h"
 #include "Plot.h"
 
@@ -48,6 +50,8 @@ void runVisualNavigationFromVideo(
     if (scenario == 4) {
         imgModulus  = 10;        // Take frames divisible by this number
     } else if (scenario == 5) {
+        imgModulus  = 1;
+    } else if (scenario == 6) {
         imgModulus  = 1;
     }
     int divisor     = 2;         // Image scaling factor (used for plotting only)
@@ -125,7 +129,7 @@ void runVisualNavigationFromVideo(
     if (scenario == 4) {
         initialPose = getInitialPose(djiVideoCaption[0]);
     } else {
-        // Scenario 5: Indoor, start with non-zero position for testing
+        // Scenario 5/6: Indoor, start with non-zero position for testing
         initialPose << 0.0, 0.0, -1.5,  // position [m]: x=1m, y=0.5m, z=0.2m
                        0.0, 0.0, 0.0;   // orientation [rad]: roll=0, pitch=0, yaw=0
     }
@@ -159,7 +163,7 @@ void runVisualNavigationFromVideo(
         Pz.block<3,3>(3,3) = 2.0 * Eigen::Matrix3d::Identity();  // angular velocity
         Pz.block<3,3>(6,6) = 0.001 * Eigen::Matrix3d::Identity(); // position
         Pz.block<3,3>(9,9) = 0.001 * Eigen::Matrix3d::Identity(); // orientation
-    } else if (scenario == 5) {
+    } else if (scenario == 5 || scenario == 6) {
         std::println("Pz created");
         Pz.block<3,3>(0,0) = 1.0 * Eigen::Matrix3d::Identity();  // velocity uncertainty
         Pz.block<3,3>(3,3) = 1.0 * Eigen::Matrix3d::Identity();  // angular velocity
@@ -178,6 +182,8 @@ void runVisualNavigationFromVideo(
         systemPtr = std::make_unique<SystemVisualNav>(initialDensity);
     } else if (scenario == 5) {
         systemPtr = std::make_unique<SystemVisualNavPoseLandmarks>(initialDensity);
+    } else if (scenario == 6) {
+        systemPtr = std::make_unique<SystemVisualNavPointLandmarks>(initialDensity);
     }
     std::unique_ptr<MeasurementSLAMIdenticalTagBundle> measTags;
     SystemVisualNav & system = *systemPtr;
@@ -185,11 +191,20 @@ void runVisualNavigationFromVideo(
     // Set scenario for process noise parameters
     system.setScenario(scenario);
     
-    // Create Plot for scenario 5
+    // Create Plot for scenario 5 and 6
     std::unique_ptr<Plot> plot;
-    if (scenario == 5) {
+    if (scenario == 5 || scenario == 6) {
         std::println("Plot created");
         plot = std::make_unique<Plot>(camera);
+        
+        // Set camera distance and viewing angle based on scenario
+        if (scenario == 5) {
+            plot->setCameraDistance(4.0);   // Closer view for ArUco tags
+            // Keep default viewing angle (azimuth=0, elevation=0)
+        } else if (scenario == 6) {
+            plot->setCameraDistance(12.0);  // Zoomed out view for point landmarks
+            plot->setCameraView(20.0, 10.0); // Adjust viewing angle (azimuth, elevation in degrees)
+        }
         // plot->start();
     }
     
@@ -538,6 +553,214 @@ void runVisualNavigationFromVideo(
                         // Update Plot (this composites 3D viz with camera view)
                         system.view() = outputFrame.clone();
                         plot->setData(system, *measTags);
+                        plot->render();
+                    }
+                    
+                    // Handle interactive mode
+                    bool isLastFrame = (i + imgModulus >= nFrames);
+                    if (interactive == 2 || (interactive == 1 && isLastFrame))
+                    {
+                        // Start handling plot GUI events (blocking)
+                        plot->start();
+                    }
+                    
+                    // Get the final rendered frame from Plot (has everything)
+                    cv::Mat imgout = plot->getFrame();
+                    
+                    // Export frame if needed
+                    if (doExport && !imgout.empty())
+                    {
+                        // Lazy video writer initialization
+                        if (!videoWriterOpened)
+                        {
+                            double outputFps = fps/imgModulus;
+                            int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+                            videoOut.open(outputPath.string(), codec, outputFps, imgout.size());
+                            
+                            if (!videoOut.isOpened()) {
+                                std::cerr << "Failed to open video writer!" << std::endl;
+                                doExport = false;
+                            } else {
+                                bufferedVideoWriter.start(videoOut);
+                                videoWriterOpened = true;
+                                std::println("Video writer opened: [{} x {}] @ {} fps", 
+                                           imgout.size().width, imgout.size().height, outputFps);
+                            }
+                        }
+                        
+                        if (videoWriterOpened) {
+                            bufferedVideoWriter.write(imgout);
+                        }
+                    }
+                
+                    // Update for next iteration
+                    rQOikm1.resize(2, rQOik.cols());
+                    rQOikm1 = rQOik;
+                    etakm1 = etak;
+                }
+                else if (scenario == 6) {
+                    // Scenario 6: Indoor Flow + Point SLAM
+                    
+                    // Mark frame as a flow frame (needed for proper zeta cloning)
+                    system.setFlowEvent(true);
+                    
+                    // 1. Detect feature points (Shi-Tomasi)
+                    int maxNumFeatures = 100;
+                    ShiTomasiDetectionResult featureResult = detectAndDrawShiAndTomasi(imgk_raw, maxNumFeatures);
+                    cv::Mat outputFrame = featureResult.image.clone();  // Already has features drawn on it
+                    
+                    // 2. Indoor Flow measurement
+                    MeasurementIndoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
+                    measFlow.process(system);
+                    std::println("Flow update complete");
+                    
+                    // Get tracked features for next iteration
+                    rQOikm1 = measFlow.trackedPreviousFeatures();
+                    const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik = measFlow.trackedCurrentFeatures();
+                    
+                    // Update state after flow measurement
+                    Eigen::VectorXd x = system.density.mean();
+                    Eigen::Vector6d etak = x.segment<6>(6);
+                    
+                    // ===== COMPUTE PREDICTED FLOW FOR VISUALIZATION =====
+                    // Skip visualization if no features tracked (first frame)
+                    bool canVisualizeFlow = (rQOikm1.cols() > 0 && rQOik.cols() > 0 && 
+                                            rQOikm1.cols() == rQOik.cols());
+                    
+                    if (canVisualizeFlow) 
+                    {
+                        // Extract poses from state
+                        Eigen::Vector3d rBNn_k = x.segment<3>(6);
+                        Eigen::Vector3d thetaNB_k = x.segment<3>(9);
+                        Eigen::Vector3d rBNn_km1 = x.segment<3>(12);
+                        Eigen::Vector3d thetaNB_km1 = x.segment<3>(15);
+                        
+                        // Compute fundamental matrix F
+                        Eigen::Matrix3d Rnb_k = rpy2rot(thetaNB_k);
+                        Eigen::Matrix3d Rnb_km1 = rpy2rot(thetaNB_km1);
+                        Eigen::Matrix3d Rnc_k = Rnb_k * camera.Tbc.rotationMatrix;
+                        Eigen::Matrix3d Rnc_km1 = Rnb_km1 * camera.Tbc.rotationMatrix;
+                        
+                        Eigen::Matrix3d K;
+                        cv::cv2eigen(camera.cameraMatrix, K);
+                        double fx = K(0, 0);
+                        double fy = K(1, 1);
+                        double cx = K(0, 2);
+                        double cy = K(1, 2);
+                        Eigen::Matrix3d K_inv;
+                        K_inv << 1.0/fx,      0,   -cx/fx,
+                                0,      1.0/fy,   -cy/fy,
+                                0,           0,        1;
+                        
+                        Eigen::Vector3d translation = rBNn_km1 - rBNn_k;
+                        Eigen::Matrix3d S_t;
+                        S_t << 0, -translation(2), translation(1),
+                            translation(2), 0, -translation(0),
+                            -translation(1), translation(0), 0;
+                        
+                        Eigen::Matrix3d F = K_inv.transpose() * Rnc_k.transpose() * S_t * Rnc_km1 * K_inv;
+                        
+                        // Get undistorted features in homogeneous coordinates
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOikm1 = camera.undistort(rQOikm1);
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik = camera.undistort(rQOik);
+                        
+                        Eigen::Matrix<double, 3, Eigen::Dynamic> pkm1(3, rQOikm1.cols());
+                        pkm1.topRows<2>() = rQbarOikm1;
+                        pkm1.row(2).setOnes();
+                        
+                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_measured(3, rQOik.cols());
+                        pk_measured.topRows<2>() = rQbarOik;
+                        pk_measured.row(2).setOnes();
+                        
+                        // Project each point onto its epipolar line using QR decomposition
+                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_hat(3, rQOik.cols());
+                        
+                        for (int j = 0; j < rQOik.cols(); ++j) 
+                        {
+                            // Compute epipolar line l[k] = F * p[k-1]
+                            Eigen::Vector3d l = F * pkm1.col(j);
+                            
+                            // Normalize point n_p(p[k])
+                            Eigen::Vector3d n_p = pk_measured.col(j) / pk_measured(2, j);
+                            
+                            // Set up constraint matrix A = [l[k]; e3]^T (3×2)
+                            Eigen::Matrix<double, 2, 3> A_rows;
+                            A_rows.row(0) = l.transpose();
+                            A_rows.row(1) = Eigen::Vector3d(0, 0, 1).transpose();
+                            Eigen::Matrix<double, 3, 2> A = A_rows.transpose();
+                            
+                            Eigen::Vector2d b(0, 1);
+                            
+                            // QR decomposition: A^T = [Y Z][R1; 0]
+                            Eigen::HouseholderQR<Eigen::Matrix<double, 3, 2>> qr(A);
+                            Eigen::Matrix3d Q = qr.householderQ();
+                            Eigen::Matrix2d R1 = qr.matrixQR().topLeftCorner<2, 2>().triangularView<Eigen::Upper>();
+                            
+                            Eigen::Matrix<double, 3, 2> Y = Q.leftCols<2>();
+                            Eigen::Vector3d Z = Q.col(2);
+                            
+                            // Apply formula: p̂[k] = YR₁^(-T)[0; 1] + ZZ^T n_p(p[k])
+                            Eigen::Vector2d R1_inv_T_b = R1.transpose().triangularView<Eigen::Lower>().solve(b);
+                            pk_hat.col(j) = Y * R1_inv_T_b + Z * (Z.dot(n_p));
+                        }
+                        
+                        // Convert predicted points to image coordinates
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik_hat(2, rQOik.cols());
+                        for (int j = 0; j < rQOik.cols(); ++j) {
+                            rQbarOik_hat.col(j) = pk_hat.col(j).head<2>() / pk_hat(2, j);
+                        }
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = camera.distort(rQbarOik_hat);
+                    
+                    // Draw measured and predicted flow vectors on outputFrame (full resolution)
+                    for (int j = 0; j < rQOik.cols(); ++j)
+                    {
+                        cv::Point2f ptPrev(rQOikm1(0, j), rQOikm1(1, j));
+                        cv::Point2f ptCurr(rQOik(0, j), rQOik(1, j));
+                        cv::Point2f ptPred(rQOik_hat(0, j), rQOik_hat(1, j));
+                        
+                        // Predicted flow (blue)
+                        cv::arrowedLine(outputFrame, ptPrev, ptPred, 
+                                       cv::Scalar(255, 0, 0), divisor, cv::LINE_AA);
+                        
+                        if (measFlow.inlierMask()[j])
+                        {
+                            // Measured inliers (green)
+                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
+                                           cv::Scalar(0, 255, 0), divisor, cv::LINE_AA);
+                        }
+                        else
+                        {
+                            // Measured outliers (red)
+                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
+                                           cv::Scalar(0, 0, 255), divisor, cv::LINE_AA);
+                        }
+                    }
+                    } // end if (canVisualizeFlow)
+                    else {
+                        std::println("Skipping flow visualization (first frame or no features)");
+                    }
+                    
+                    // 3. Process Point SLAM measurement if features detected
+                    if (!featureResult.points.empty())
+                    {
+                        // Format Y matrix (2 × nDetections)
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> Y(2, featureResult.points.size());
+                        for (size_t j = 0; j < featureResult.points.size(); ++j)
+                        {
+                            Y(0, j) = featureResult.points[j].x;
+                            Y(1, j) = featureResult.points[j].y;
+                        }
+                
+                        // Create and process point bundle measurement
+                        MeasurementPointBundle measPoints(time, Y, camera);
+                        measPoints.process(system);
+                        
+                        std::println("Point SLAM update complete");
+                        std::println("Total landmarks: {}", system.numberLandmarks());
+                        
+                        // Update Plot (this composites 3D viz with camera view)
+                        system.view() = outputFrame.clone();
+                        plot->setData(system, measPoints);
                         plot->render();
                     }
                     

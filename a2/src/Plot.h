@@ -147,6 +147,8 @@ public:
     void render();
     void start() const;
     void setData(const SystemVisualNav & system, const MeasurementSLAM & measurement);
+    void setCameraDistance(double scale);
+    void setCameraView(double azimuth, double elevation);
     cv::Mat getFrame() const;
 
 private:

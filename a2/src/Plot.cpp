@@ -85,6 +85,7 @@
 #include "MeasurementSLAM.h"
 #include "Plot.h"
 #include "MeasurementSLAMIdenticalTagBundle.h"
+#include "MeasurementSLAMPointBundle.h"
 
 // Forward declarations
 static void hsv2rgb(const double & h, const double & s, const double & v, double & r, double & g, double & b);
@@ -544,7 +545,7 @@ Plot::Plot(const Camera & camera)
     // rFNn
     threeDimRenderer->GetActiveCamera()->SetFocalPoint(-3,-5,-5);
     // rCNn
-    double sc = 4;
+    double sc = 4;  // Default zoom for ArUco tags (scenario 5)
     threeDimRenderer->GetActiveCamera()->SetPosition(-2.0*sc,-2.0*sc,-2.0*sc);
     threeDimRenderer->GetActiveCamera()->SetViewUp(0,0,-1);
 
@@ -582,11 +583,13 @@ void Plot::render()
 
     // Get association and visibility information from measurement
     const auto* measurementTagBundle = dynamic_cast<const MeasurementSLAMIdenticalTagBundle*>(pMeasurement.get());
+    const auto* measurementPointBundle = dynamic_cast<const MeasurementPointBundle*>(pMeasurement.get());
 
     std::vector<int> associations;
     std::vector<bool> visibility;
     
     if (measurementTagBundle) {
+        // Handle ArUco pose landmarks
         const auto& tagAssociations = measurementTagBundle->getAssociations();
         const auto& visibleLandmarks = measurementTagBundle->getVisibleLandmarks();
 
@@ -600,6 +603,23 @@ void Plot::render()
             if (globalIdx < pSystem->numberLandmarks()) {
                 visibility[globalIdx] = true;
                 associations[globalIdx] = tagAssociations[j];
+            }
+        }
+    } else if (measurementPointBundle) {
+        // Handle 3D point landmarks
+        const auto& pointAssociations = measurementPointBundle->getAssociations();
+        const auto& visibleLandmarks = measurementPointBundle->getVisibleLandmarks();
+
+        // Initialize with all landmarks not visible and not associated
+        visibility.resize(pSystem->numberLandmarks(), false);
+        associations.resize(pSystem->numberLandmarks(), -1);
+        
+        // Map visible landmarks to global indices
+        for (size_t j = 0; j < visibleLandmarks.size(); ++j) {
+            size_t globalIdx = visibleLandmarks[j];
+            if (globalIdx < pSystem->numberLandmarks()) {
+                visibility[globalIdx] = true;
+                associations[globalIdx] = pointAssociations[j];
             }
         }
     }
@@ -699,6 +719,17 @@ void Plot::render()
 void Plot::start() const
 {
     interactor->Start(); // block on interactor
+}
+
+void Plot::setCameraDistance(double scale)
+{
+    threeDimRenderer->GetActiveCamera()->SetPosition(-2.0*scale, -2.0*scale, -2.0*scale);
+}
+
+void Plot::setCameraView(double azimuth, double elevation)
+{
+    threeDimRenderer->GetActiveCamera()->Azimuth(azimuth);
+    threeDimRenderer->GetActiveCamera()->Elevation(elevation);
 }
 
 
