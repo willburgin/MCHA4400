@@ -387,8 +387,6 @@ void MeasurementPointBundle::update(SystemBase & system)
         landmarksInitializedThisFrame++;
         
         size_t newLandmarkIdx = systemVisualNav.numberLandmarks() - 1;
-        std::cout << "  Initialized point landmark " << newLandmarkIdx 
-                  << " (dist=" << candidateDist << ", depth=" << arbitrary_depth << "m)" << std::endl;
 
         // Add to visible landmarks and associate with detection for immediate update
         visibleLandmarks_.push_back(newLandmarkIdx);
@@ -397,18 +395,8 @@ void MeasurementPointBundle::update(SystemBase & system)
         // Initialize failure tracking for new landmark
         systemPointLandmarks.consecutiveFailures_.push_back(0);
     }
-    
-    if (systemPointLandmarks.consecutiveFailures_.size() > 3) {
-        std::cout << "Before Measurement::update() - Landmark 3 failures: " 
-              << systemPointLandmarks.consecutiveFailures_[3] << std::endl;
-    }
 
     Measurement::update(system);
-
-    if (systemPointLandmarks.consecutiveFailures_.size() > 3) {
-        std::cout << "After Measurement::update() - Landmark 3 failures: " 
-                << systemPointLandmarks.consecutiveFailures_[3] << std::endl;
-    }
 }
 
 // Image feature location for a given landmark and Jacobian

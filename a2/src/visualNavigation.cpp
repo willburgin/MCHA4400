@@ -32,6 +32,13 @@ static void plotCompass(cv::Mat & img, const Eigen::Vector6d & etak, const Camer
 static void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor);
 static void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak, const std::vector<DJIVideoCaption> & djiVideoCaption, int frameIndex, int scenario);
 static void plotTrajectory2D(cv::Mat & img, const Eigen::Vector6d & etak, const std::vector<DJIVideoCaption> & djiVideoCaption, int frameIndex);
+static void plotFlowVectors(cv::Mat & outputFrame, 
+                           const Eigen::VectorXd & x,
+                           const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOikm1,
+                           const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik,
+                           const std::vector<unsigned char> & inlierMask,
+                           const Camera & camera,
+                           int divisor);
 static std::deque<Eigen::Vector2d> estimatedTraj;
 static std::deque<Eigen::Vector2d> gpsTraj;
 static cv::Mat trajImg;
@@ -411,123 +418,8 @@ void runVisualNavigationFromVideo(
                     Eigen::VectorXd x = system.density.mean();
                     Eigen::Vector6d etak = x.segment<6>(6);
                     
-                    // ===== COMPUTE PREDICTED FLOW FOR VISUALIZATION =====
-                    // Skip visualization if no features tracked (first frame)
-                    bool canVisualizeFlow = (rQOikm1.cols() > 0 && rQOik.cols() > 0 && 
-                                            rQOikm1.cols() == rQOik.cols());
-                    
-                    if (canVisualizeFlow) 
-                    {
-                        // Extract poses from state
-                        Eigen::Vector3d rBNn_k = x.segment<3>(6);
-                        Eigen::Vector3d thetaNB_k = x.segment<3>(9);
-                        Eigen::Vector3d rBNn_km1 = x.segment<3>(12);
-                        Eigen::Vector3d thetaNB_km1 = x.segment<3>(15);
-                        
-                        // Compute fundamental matrix F
-                        Eigen::Matrix3d Rnb_k = rpy2rot(thetaNB_k);
-                        Eigen::Matrix3d Rnb_km1 = rpy2rot(thetaNB_km1);
-                        Eigen::Matrix3d Rnc_k = Rnb_k * camera.Tbc.rotationMatrix;
-                        Eigen::Matrix3d Rnc_km1 = Rnb_km1 * camera.Tbc.rotationMatrix;
-                        
-                        Eigen::Matrix3d K;
-                        cv::cv2eigen(camera.cameraMatrix, K);
-                        double fx = K(0, 0);
-                        double fy = K(1, 1);
-                        double cx = K(0, 2);
-                        double cy = K(1, 2);
-                        Eigen::Matrix3d K_inv;
-                        K_inv << 1.0/fx,      0,   -cx/fx,
-                                0,      1.0/fy,   -cy/fy,
-                                0,           0,        1;
-                        
-                        Eigen::Vector3d translation = rBNn_km1 - rBNn_k;
-                        Eigen::Matrix3d S_t;
-                        S_t << 0, -translation(2), translation(1),
-                            translation(2), 0, -translation(0),
-                            -translation(1), translation(0), 0;
-                        
-                        Eigen::Matrix3d F = K_inv.transpose() * Rnc_k.transpose() * S_t * Rnc_km1 * K_inv;
-                        
-                        // Get undistorted features in homogeneous coordinates
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOikm1 = camera.undistort(rQOikm1);
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik = camera.undistort(rQOik);
-                        
-                        Eigen::Matrix<double, 3, Eigen::Dynamic> pkm1(3, rQOikm1.cols());
-                        pkm1.topRows<2>() = rQbarOikm1;
-                        pkm1.row(2).setOnes();
-                        
-                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_measured(3, rQOik.cols());
-                        pk_measured.topRows<2>() = rQbarOik;
-                        pk_measured.row(2).setOnes();
-                        
-                        // Project each point onto its epipolar line using QR decomposition
-                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_hat(3, rQOik.cols());
-                        
-                        for (int j = 0; j < rQOik.cols(); ++j) 
-                        {
-                            // Compute epipolar line l[k] = F * p[k-1]
-                            Eigen::Vector3d l = F * pkm1.col(j);
-                            
-                            // Normalize point n_p(p[k])
-                            Eigen::Vector3d n_p = pk_measured.col(j) / pk_measured(2, j);
-                            
-                            // Set up constraint matrix A = [l[k]; e3]^T (3×2)
-                            Eigen::Matrix<double, 2, 3> A_rows;
-                            A_rows.row(0) = l.transpose();
-                            A_rows.row(1) = Eigen::Vector3d(0, 0, 1).transpose();
-                            Eigen::Matrix<double, 3, 2> A = A_rows.transpose();
-                            
-                            Eigen::Vector2d b(0, 1);
-                            
-                            // QR decomposition: A^T = [Y Z][R1; 0]
-                            Eigen::HouseholderQR<Eigen::Matrix<double, 3, 2>> qr(A);
-                            Eigen::Matrix3d Q = qr.householderQ();
-                            Eigen::Matrix2d R1 = qr.matrixQR().topLeftCorner<2, 2>().triangularView<Eigen::Upper>();
-                            
-                            Eigen::Matrix<double, 3, 2> Y = Q.leftCols<2>();
-                            Eigen::Vector3d Z = Q.col(2);
-                            
-                            // Apply formula: p̂[k] = YR₁^(-T)[0; 1] + ZZ^T n_p(p[k])
-                            Eigen::Vector2d R1_inv_T_b = R1.transpose().triangularView<Eigen::Lower>().solve(b);
-                            pk_hat.col(j) = Y * R1_inv_T_b + Z * (Z.dot(n_p));
-                        }
-                        
-                        // Convert predicted points to image coordinates
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik_hat(2, rQOik.cols());
-                        for (int j = 0; j < rQOik.cols(); ++j) {
-                            rQbarOik_hat.col(j) = pk_hat.col(j).head<2>() / pk_hat(2, j);
-                        }
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = camera.distort(rQbarOik_hat);
-                    
-                    // Draw measured and predicted flow vectors on outputFrame (full resolution)
-                    for (int j = 0; j < rQOik.cols(); ++j)
-                    {
-                        cv::Point2f ptPrev(rQOikm1(0, j), rQOikm1(1, j));
-                        cv::Point2f ptCurr(rQOik(0, j), rQOik(1, j));
-                        cv::Point2f ptPred(rQOik_hat(0, j), rQOik_hat(1, j));
-                        
-                        // Predicted flow (blue)
-                        cv::arrowedLine(outputFrame, ptPrev, ptPred, 
-                                       cv::Scalar(255, 0, 0), divisor, cv::LINE_AA);
-                        
-                        if (measFlow.inlierMask()[j])
-                        {
-                            // Measured inliers (green)
-                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
-                                           cv::Scalar(0, 255, 0), divisor, cv::LINE_AA);
-                        }
-                        else
-                        {
-                            // Measured outliers (red)
-                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
-                                           cv::Scalar(0, 0, 255), divisor, cv::LINE_AA);
-                        }
-                    }
-                    } // end if (canVisualizeFlow)
-                    else {
-                        std::println("Skipping flow visualization (first frame or no features)");
-                    }
+                    // Visualize flow vectors
+                    plotFlowVectors(outputFrame, x, rQOikm1, rQOik, measFlow.inlierMask(), camera, divisor);
                     
                     // 3. Process ArUco SLAM measurement if markers detected
                     if (!arucoResult.markerCorners.empty())
@@ -622,123 +514,8 @@ void runVisualNavigationFromVideo(
                     Eigen::VectorXd x = system.density.mean();
                     Eigen::Vector6d etak = x.segment<6>(6);
                     
-                    // ===== COMPUTE PREDICTED FLOW FOR VISUALIZATION =====
-                    // Skip visualization if no features tracked (first frame)
-                    bool canVisualizeFlow = (rQOikm1.cols() > 0 && rQOik.cols() > 0 && 
-                                            rQOikm1.cols() == rQOik.cols());
-                    
-                    if (canVisualizeFlow) 
-                    {
-                        // Extract poses from state
-                        Eigen::Vector3d rBNn_k = x.segment<3>(6);
-                        Eigen::Vector3d thetaNB_k = x.segment<3>(9);
-                        Eigen::Vector3d rBNn_km1 = x.segment<3>(12);
-                        Eigen::Vector3d thetaNB_km1 = x.segment<3>(15);
-                        
-                        // Compute fundamental matrix F
-                        Eigen::Matrix3d Rnb_k = rpy2rot(thetaNB_k);
-                        Eigen::Matrix3d Rnb_km1 = rpy2rot(thetaNB_km1);
-                        Eigen::Matrix3d Rnc_k = Rnb_k * camera.Tbc.rotationMatrix;
-                        Eigen::Matrix3d Rnc_km1 = Rnb_km1 * camera.Tbc.rotationMatrix;
-                        
-                        Eigen::Matrix3d K;
-                        cv::cv2eigen(camera.cameraMatrix, K);
-                        double fx = K(0, 0);
-                        double fy = K(1, 1);
-                        double cx = K(0, 2);
-                        double cy = K(1, 2);
-                        Eigen::Matrix3d K_inv;
-                        K_inv << 1.0/fx,      0,   -cx/fx,
-                                0,      1.0/fy,   -cy/fy,
-                                0,           0,        1;
-                        
-                        Eigen::Vector3d translation = rBNn_km1 - rBNn_k;
-                        Eigen::Matrix3d S_t;
-                        S_t << 0, -translation(2), translation(1),
-                            translation(2), 0, -translation(0),
-                            -translation(1), translation(0), 0;
-                        
-                        Eigen::Matrix3d F = K_inv.transpose() * Rnc_k.transpose() * S_t * Rnc_km1 * K_inv;
-                        
-                        // Get undistorted features in homogeneous coordinates
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOikm1 = camera.undistort(rQOikm1);
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik = camera.undistort(rQOik);
-                        
-                        Eigen::Matrix<double, 3, Eigen::Dynamic> pkm1(3, rQOikm1.cols());
-                        pkm1.topRows<2>() = rQbarOikm1;
-                        pkm1.row(2).setOnes();
-                        
-                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_measured(3, rQOik.cols());
-                        pk_measured.topRows<2>() = rQbarOik;
-                        pk_measured.row(2).setOnes();
-                        
-                        // Project each point onto its epipolar line using QR decomposition
-                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_hat(3, rQOik.cols());
-                        
-                        for (int j = 0; j < rQOik.cols(); ++j) 
-                        {
-                            // Compute epipolar line l[k] = F * p[k-1]
-                            Eigen::Vector3d l = F * pkm1.col(j);
-                            
-                            // Normalize point n_p(p[k])
-                            Eigen::Vector3d n_p = pk_measured.col(j) / pk_measured(2, j);
-                            
-                            // Set up constraint matrix A = [l[k]; e3]^T (3×2)
-                            Eigen::Matrix<double, 2, 3> A_rows;
-                            A_rows.row(0) = l.transpose();
-                            A_rows.row(1) = Eigen::Vector3d(0, 0, 1).transpose();
-                            Eigen::Matrix<double, 3, 2> A = A_rows.transpose();
-                            
-                            Eigen::Vector2d b(0, 1);
-                            
-                            // QR decomposition: A^T = [Y Z][R1; 0]
-                            Eigen::HouseholderQR<Eigen::Matrix<double, 3, 2>> qr(A);
-                            Eigen::Matrix3d Q = qr.householderQ();
-                            Eigen::Matrix2d R1 = qr.matrixQR().topLeftCorner<2, 2>().triangularView<Eigen::Upper>();
-                            
-                            Eigen::Matrix<double, 3, 2> Y = Q.leftCols<2>();
-                            Eigen::Vector3d Z = Q.col(2);
-                            
-                            // Apply formula: p̂[k] = YR₁^(-T)[0; 1] + ZZ^T n_p(p[k])
-                            Eigen::Vector2d R1_inv_T_b = R1.transpose().triangularView<Eigen::Lower>().solve(b);
-                            pk_hat.col(j) = Y * R1_inv_T_b + Z * (Z.dot(n_p));
-                        }
-                        
-                        // Convert predicted points to image coordinates
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik_hat(2, rQOik.cols());
-                        for (int j = 0; j < rQOik.cols(); ++j) {
-                            rQbarOik_hat.col(j) = pk_hat.col(j).head<2>() / pk_hat(2, j);
-                        }
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = camera.distort(rQbarOik_hat);
-                    
-                    // Draw measured and predicted flow vectors on outputFrame (full resolution)
-                    for (int j = 0; j < rQOik.cols(); ++j)
-                    {
-                        cv::Point2f ptPrev(rQOikm1(0, j), rQOikm1(1, j));
-                        cv::Point2f ptCurr(rQOik(0, j), rQOik(1, j));
-                        cv::Point2f ptPred(rQOik_hat(0, j), rQOik_hat(1, j));
-                        
-                        // Predicted flow (blue)
-                        cv::arrowedLine(outputFrame, ptPrev, ptPred, 
-                                       cv::Scalar(255, 0, 0), divisor, cv::LINE_AA);
-                        
-                        if (measFlow.inlierMask()[j])
-                        {
-                            // Measured inliers (green)
-                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
-                                           cv::Scalar(0, 255, 0), divisor, cv::LINE_AA);
-                        }
-                        else
-                        {
-                            // Measured outliers (red)
-                            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
-                                           cv::Scalar(0, 0, 255), divisor, cv::LINE_AA);
-                        }
-                    }
-                    } // end if (canVisualizeFlow)
-                    else {
-                        std::println("Skipping flow visualization (first frame or no features)");
-                    }
+                    // Visualize flow vectors
+                    plotFlowVectors(outputFrame, x, rQOikm1, rQOik, measFlow.inlierMask(), camera, divisor);
                     
                     // 3. Process Point SLAM measurement if features detected
                     if (!featureResult.points.empty())
@@ -1177,4 +954,129 @@ void plotTrajectory2D(cv::Mat & img, const Eigen::Vector6d & etak,
     
     // Show
     cv::imshow("Trajectory 2D", trajImg);
+}
+
+void plotFlowVectors(cv::Mat & outputFrame, 
+                    const Eigen::VectorXd & x,
+                    const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOikm1,
+                    const Eigen::Matrix<double, 2, Eigen::Dynamic> & rQOik,
+                    const std::vector<unsigned char> & inlierMask,
+                    const Camera & camera,
+                    int divisor)
+{
+    // Skip visualization if no features tracked (first frame)
+    bool canVisualizeFlow = (rQOikm1.cols() > 0 && rQOik.cols() > 0 && 
+                            rQOikm1.cols() == rQOik.cols());
+    
+    if (!canVisualizeFlow) {
+        std::println("Skipping flow visualization (first frame or no features)");
+        return;
+    }
+    
+    // Extract poses from state
+    Eigen::Vector3d rBNn_k = x.segment<3>(6);
+    Eigen::Vector3d thetaNB_k = x.segment<3>(9);
+    Eigen::Vector3d rBNn_km1 = x.segment<3>(12);
+    Eigen::Vector3d thetaNB_km1 = x.segment<3>(15);
+    
+    // Compute fundamental matrix F
+    Eigen::Matrix3d Rnb_k = rpy2rot(thetaNB_k);
+    Eigen::Matrix3d Rnb_km1 = rpy2rot(thetaNB_km1);
+    Eigen::Matrix3d Rnc_k = Rnb_k * camera.Tbc.rotationMatrix;
+    Eigen::Matrix3d Rnc_km1 = Rnb_km1 * camera.Tbc.rotationMatrix;
+    
+    Eigen::Matrix3d K;
+    cv::cv2eigen(camera.cameraMatrix, K);
+    double fx = K(0, 0);
+    double fy = K(1, 1);
+    double cx = K(0, 2);
+    double cy = K(1, 2);
+    Eigen::Matrix3d K_inv;
+    K_inv << 1.0/fx,      0,   -cx/fx,
+            0,      1.0/fy,   -cy/fy,
+            0,           0,        1;
+    
+    Eigen::Vector3d translation = rBNn_km1 - rBNn_k;
+    Eigen::Matrix3d S_t;
+    S_t << 0, -translation(2), translation(1),
+        translation(2), 0, -translation(0),
+        -translation(1), translation(0), 0;
+    
+    Eigen::Matrix3d F = K_inv.transpose() * Rnc_k.transpose() * S_t * Rnc_km1 * K_inv;
+    
+    // Get undistorted features in homogeneous coordinates
+    Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOikm1 = camera.undistort(rQOikm1);
+    Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik = camera.undistort(rQOik);
+    
+    Eigen::Matrix<double, 3, Eigen::Dynamic> pkm1(3, rQOikm1.cols());
+    pkm1.topRows<2>() = rQbarOikm1;
+    pkm1.row(2).setOnes();
+    
+    Eigen::Matrix<double, 3, Eigen::Dynamic> pk_measured(3, rQOik.cols());
+    pk_measured.topRows<2>() = rQbarOik;
+    pk_measured.row(2).setOnes();
+    
+    // Project each point onto its epipolar line using QR decomposition
+    Eigen::Matrix<double, 3, Eigen::Dynamic> pk_hat(3, rQOik.cols());
+    
+    for (int j = 0; j < rQOik.cols(); ++j) 
+    {
+        // Compute epipolar line l[k] = F * p[k-1]
+        Eigen::Vector3d l = F * pkm1.col(j);
+        
+        // Normalize point n_p(p[k])
+        Eigen::Vector3d n_p = pk_measured.col(j) / pk_measured(2, j);
+        
+        // Set up constraint matrix A = [l[k]; e3]^T (3×2)
+        Eigen::Matrix<double, 2, 3> A_rows;
+        A_rows.row(0) = l.transpose();
+        A_rows.row(1) = Eigen::Vector3d(0, 0, 1).transpose();
+        Eigen::Matrix<double, 3, 2> A = A_rows.transpose();
+        
+        Eigen::Vector2d b(0, 1);
+        
+        // QR decomposition: A^T = [Y Z][R1; 0]
+        Eigen::HouseholderQR<Eigen::Matrix<double, 3, 2>> qr(A);
+        Eigen::Matrix3d Q = qr.householderQ();
+        Eigen::Matrix2d R1 = qr.matrixQR().topLeftCorner<2, 2>().triangularView<Eigen::Upper>();
+        
+        Eigen::Matrix<double, 3, 2> Y = Q.leftCols<2>();
+        Eigen::Vector3d Z = Q.col(2);
+        
+        // Apply formula: p̂[k] = YR₁^(-T)[0; 1] + ZZ^T n_p(p[k])
+        Eigen::Vector2d R1_inv_T_b = R1.transpose().triangularView<Eigen::Lower>().solve(b);
+        pk_hat.col(j) = Y * R1_inv_T_b + Z * (Z.dot(n_p));
+    }
+    
+    // Convert predicted points to image coordinates
+    Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik_hat(2, rQOik.cols());
+    for (int j = 0; j < rQOik.cols(); ++j) {
+        rQbarOik_hat.col(j) = pk_hat.col(j).head<2>() / pk_hat(2, j);
+    }
+    Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = camera.distort(rQbarOik_hat);
+
+    // Draw measured and predicted flow vectors on outputFrame (full resolution)
+    for (int j = 0; j < rQOik.cols(); ++j)
+    {
+        cv::Point2f ptPrev(rQOikm1(0, j), rQOikm1(1, j));
+        cv::Point2f ptCurr(rQOik(0, j), rQOik(1, j));
+        cv::Point2f ptPred(rQOik_hat(0, j), rQOik_hat(1, j));
+        
+        // Predicted flow (blue)
+        cv::arrowedLine(outputFrame, ptPrev, ptPred, 
+                       cv::Scalar(255, 0, 0), divisor, cv::LINE_AA);
+        
+        if (inlierMask[j])
+        {
+            // Measured inliers (green)
+            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
+                           cv::Scalar(0, 255, 0), divisor, cv::LINE_AA);
+        }
+        else
+        {
+            // Measured outliers (red)
+            cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
+                           cv::Scalar(0, 0, 255), divisor, cv::LINE_AA);
+        }
+    }
 }
