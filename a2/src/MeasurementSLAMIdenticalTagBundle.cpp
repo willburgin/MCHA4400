@@ -19,7 +19,7 @@
 MeasurementSLAMIdenticalTagBundle::MeasurementSLAMIdenticalTagBundle(double time, const Eigen::Matrix<double, 8, Eigen::Dynamic> & Y, const Camera & camera)
     : MeasurementSLAM(time, camera)
     , Y_(Y)
-    , sigma_(8.0) // TODO: Assignment(s)
+    , sigma_(6.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
@@ -200,7 +200,7 @@ void MeasurementSLAMIdenticalTagBundle::update(SystemBase & system)
             Eigen::VectorXd mu_new(6);
             mu_new << posInit, oriInit;
             
-            double epsilon = 50;
+            double epsilon = 10.0;
             Eigen::MatrixXd Xi_new = epsilon * Eigen::MatrixXd::Identity(6, 6);
             Eigen::VectorXd nu_new = Xi_new * mu_new;
             

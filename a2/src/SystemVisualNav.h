@@ -51,9 +51,11 @@ public:
     const cv::Mat & view() const;
 
     void setFlowEvent(bool isEvent);
+    void setScenario(int scenario);
 protected:
     bool isFlowEvent_ = false;
     cv::Mat view_;
+    int scenario_ = 4;  // Default to scenario 4
 };
 
 #include "rotation.hpp"

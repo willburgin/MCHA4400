@@ -9,7 +9,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${command:cmake.launchTargetPath}",
-      "args": ["-s=4", "-i=0", "-e", "../data/outdoor/flight.MOV"], // Set command line arguments for debugging here
+      "args": ["-s=5", "-i=0", "../data/indoor/tag_identical.MOV"], // Set command line arguments for debugging here
       "stopAtEntry": false,
       "cwd": "${command:cmake.launchTargetDirectory}",
       "osx": {

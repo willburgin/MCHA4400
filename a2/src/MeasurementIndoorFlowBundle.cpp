@@ -26,16 +26,16 @@ MeasurementIndoorFlowBundle::MeasurementIndoorFlowBundle(double time, const Came
     , mask_()
     , pkm1_()
     , pk_()
-    , sigma_(2.0) // TODO: Assignment(s)
+    , sigma_(3.0) // TODO: Assignment(s)
 {
     // TODO: Assignment(s)
     // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;
-    // updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
+    updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
 
     // TODO: Lab 11
     const int divisor               = 2;                // Image scaling factor
-    const int maxNumFeatures        = 900;                // Maximum number of features per frame
-    const int minNumFeatures        = 850;                // Minimum number of feature per frame
+    const int maxNumFeatures        = 150;                // Maximum number of features per frame
+    const int minNumFeatures        = 100;                // Minimum number of feature per frame
 
     cv::TermCriteria termcrit(cv::TermCriteria::COUNT|cv::TermCriteria::EPS,30,0.01);
     cv::Size subPixWinSize(11, 11);     // Window size for subpixel refinement
@@ -79,9 +79,9 @@ MeasurementIndoorFlowBundle::MeasurementIndoorFlowBundle(double time, const Came
         // Detect new features
         int numNewFeatures = maxNumFeatures - rQOikm1_.cols();
         std::vector<cv::Point2f> rQOik_new;
-        cv::goodFeaturesToTrack(imgk_scaled, rQOik_new, numNewFeatures, 0.01, 40, mask);
+        cv::goodFeaturesToTrack(imgkm1_scaled, rQOik_new, numNewFeatures, 0.05, 40, mask);
         if (!rQOik_new.empty()) {
-            cv::cornerSubPix(imgk_scaled, rQOik_new, cv::Size(5, 5), cv::Size(-1, -1), termcrit);
+            cv::cornerSubPix(imgkm1_scaled, rQOik_new, cv::Size(5, 5), cv::Size(-1, -1), termcrit);
         }
         std::println("Found {} new features.", rQOik_new.size());
         

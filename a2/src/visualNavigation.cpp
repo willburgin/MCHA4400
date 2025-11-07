@@ -119,23 +119,15 @@ void runVisualNavigationFromVideo(
 
     cv::VideoWriter videoOut;
     BufferedVideoWriter bufferedVideoWriter(3);
-    if (doExport)
-    {
-        cv::Size frameSize;
-        frameSize.width     = cap.get(cv::CAP_PROP_FRAME_WIDTH)/divisor;
-        frameSize.height    = cap.get(cv::CAP_PROP_FRAME_HEIGHT)/divisor;
-        double outputFps    = fps/imgModulus;
-        int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-        videoOut.open(outputPath.string(), codec, outputFps, frameSize);
-        bufferedVideoWriter.start(videoOut);
-    }
+    bool videoWriterOpened = false;  
     
     Eigen::Vector6d initialPose;
     if (scenario == 4) {
         initialPose = getInitialPose(djiVideoCaption[0]);
     } else {
-        // Scenario 5: Indoor, start at origin
-        initialPose.setZero();
+        // Scenario 5: Indoor, start with non-zero position for testing
+        initialPose << 0.0, 0.0, -1.5,  // position [m]: x=1m, y=0.5m, z=0.2m
+                       0.0, 0.0, 0.0;   // orientation [rad]: roll=0, pitch=0, yaw=0
     }
 
     // Define transformation from z to x
@@ -169,8 +161,8 @@ void runVisualNavigationFromVideo(
         Pz.block<3,3>(9,9) = 0.001 * Eigen::Matrix3d::Identity(); // orientation
     } else if (scenario == 5) {
         std::println("Pz created");
-        Pz.block<3,3>(0,0) = 0.3 * Eigen::Matrix3d::Identity();  // velocity uncertainty
-        Pz.block<3,3>(3,3) = 0.3 * Eigen::Matrix3d::Identity();  // angular velocity
+        Pz.block<3,3>(0,0) = 1.0 * Eigen::Matrix3d::Identity();  // velocity uncertainty
+        Pz.block<3,3>(3,3) = 1.0 * Eigen::Matrix3d::Identity();  // angular velocity
         Pz.block<3,3>(6,6) = 0.01 * Eigen::Matrix3d::Identity(); // position
         Pz.block<3,3>(9,9) = 0.01 * Eigen::Matrix3d::Identity(); // orientation
     }
@@ -189,6 +181,9 @@ void runVisualNavigationFromVideo(
     }
     std::unique_ptr<MeasurementSLAMIdenticalTagBundle> measTags;
     SystemVisualNav & system = *systemPtr;
+    
+    // Set scenario for process noise parameters
+    system.setScenario(scenario);
     
     // Create Plot for scenario 5
     std::unique_ptr<Plot> plot;
@@ -336,7 +331,7 @@ void runVisualNavigationFromVideo(
                     plotCompass(imgout, etak, camera, divisor);
                     plotTransVelocity(imgout, x, etak, etakm1, camera, divisor);
                     plotStateInfo(imgout, etak, djiVideoCaption, i, scenario);
-                    plotTrajectory2D(imgout, etak, djiVideoCaption, i);
+                    // plotTrajectory2D(imgout, etak, djiVideoCaption, i);
 
                     // Display
                     cv::imshow("Visual Navigation - Scenario 4", imgout);
@@ -348,9 +343,29 @@ void runVisualNavigationFromVideo(
                     }
 
                     // Write output frame
-                    if (doExport)
+                    if (doExport && !imgout.empty())
                     {
-                        bufferedVideoWriter.write(imgout);
+                        // Lazy video writer initialization
+                        if (!videoWriterOpened)
+                        {
+                            double outputFps = fps/imgModulus;
+                            int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+                            videoOut.open(outputPath.string(), codec, outputFps, imgout.size());
+                            
+                            if (!videoOut.isOpened()) {
+                                std::cerr << "Failed to open video writer!" << std::endl;
+                                doExport = false;
+                            } else {
+                                bufferedVideoWriter.start(videoOut);
+                                videoWriterOpened = true;
+                                std::println("Video writer opened: [{} x {}] @ {} fps", 
+                                           imgout.size().width, imgout.size().height, outputFps);
+                            }
+                        }
+                        
+                        if (videoWriterOpened) {
+                            bufferedVideoWriter.write(imgout);
+                        }
                     }
 
                     // Update for next iteration
@@ -370,7 +385,7 @@ void runVisualNavigationFromVideo(
                     
                     // 2. Indoor Flow measurement
                     MeasurementIndoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
-                    // measFlow.process(system);
+                    measFlow.process(system);
                     std::println("Flow update complete");
                     
                     // Get tracked features for next iteration
@@ -381,20 +396,106 @@ void runVisualNavigationFromVideo(
                     Eigen::VectorXd x = system.density.mean();
                     Eigen::Vector6d etak = x.segment<6>(6);
                     
-                    // Get predicted flow field for visualization
-                    Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = measFlow.predictedFeatures(x, system);
+                    // ===== COMPUTE PREDICTED FLOW FOR VISUALIZATION =====
+                    // Skip visualization if no features tracked (first frame)
+                    bool canVisualizeFlow = (rQOikm1.cols() > 0 && rQOik.cols() > 0 && 
+                                            rQOikm1.cols() == rQOik.cols());
                     
-                    // Draw flow vectors on outputFrame (full resolution)
+                    if (canVisualizeFlow) 
+                    {
+                        // Extract poses from state
+                        Eigen::Vector3d rBNn_k = x.segment<3>(6);
+                        Eigen::Vector3d thetaNB_k = x.segment<3>(9);
+                        Eigen::Vector3d rBNn_km1 = x.segment<3>(12);
+                        Eigen::Vector3d thetaNB_km1 = x.segment<3>(15);
+                        
+                        // Compute fundamental matrix F
+                        Eigen::Matrix3d Rnb_k = rpy2rot(thetaNB_k);
+                        Eigen::Matrix3d Rnb_km1 = rpy2rot(thetaNB_km1);
+                        Eigen::Matrix3d Rnc_k = Rnb_k * camera.Tbc.rotationMatrix;
+                        Eigen::Matrix3d Rnc_km1 = Rnb_km1 * camera.Tbc.rotationMatrix;
+                        
+                        Eigen::Matrix3d K;
+                        cv::cv2eigen(camera.cameraMatrix, K);
+                        double fx = K(0, 0);
+                        double fy = K(1, 1);
+                        double cx = K(0, 2);
+                        double cy = K(1, 2);
+                        Eigen::Matrix3d K_inv;
+                        K_inv << 1.0/fx,      0,   -cx/fx,
+                                0,      1.0/fy,   -cy/fy,
+                                0,           0,        1;
+                        
+                        Eigen::Vector3d translation = rBNn_km1 - rBNn_k;
+                        Eigen::Matrix3d S_t;
+                        S_t << 0, -translation(2), translation(1),
+                            translation(2), 0, -translation(0),
+                            -translation(1), translation(0), 0;
+                        
+                        Eigen::Matrix3d F = K_inv.transpose() * Rnc_k.transpose() * S_t * Rnc_km1 * K_inv;
+                        
+                        // Get undistorted features in homogeneous coordinates
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOikm1 = camera.undistort(rQOikm1);
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik = camera.undistort(rQOik);
+                        
+                        Eigen::Matrix<double, 3, Eigen::Dynamic> pkm1(3, rQOikm1.cols());
+                        pkm1.topRows<2>() = rQbarOikm1;
+                        pkm1.row(2).setOnes();
+                        
+                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_measured(3, rQOik.cols());
+                        pk_measured.topRows<2>() = rQbarOik;
+                        pk_measured.row(2).setOnes();
+                        
+                        // Project each point onto its epipolar line using QR decomposition
+                        Eigen::Matrix<double, 3, Eigen::Dynamic> pk_hat(3, rQOik.cols());
+                        
+                        for (int j = 0; j < rQOik.cols(); ++j) 
+                        {
+                            // Compute epipolar line l[k] = F * p[k-1]
+                            Eigen::Vector3d l = F * pkm1.col(j);
+                            
+                            // Normalize point n_p(p[k])
+                            Eigen::Vector3d n_p = pk_measured.col(j) / pk_measured(2, j);
+                            
+                            // Set up constraint matrix A = [l[k]; e3]^T (3×2)
+                            Eigen::Matrix<double, 2, 3> A_rows;
+                            A_rows.row(0) = l.transpose();
+                            A_rows.row(1) = Eigen::Vector3d(0, 0, 1).transpose();
+                            Eigen::Matrix<double, 3, 2> A = A_rows.transpose();
+                            
+                            Eigen::Vector2d b(0, 1);
+                            
+                            // QR decomposition: A^T = [Y Z][R1; 0]
+                            Eigen::HouseholderQR<Eigen::Matrix<double, 3, 2>> qr(A);
+                            Eigen::Matrix3d Q = qr.householderQ();
+                            Eigen::Matrix2d R1 = qr.matrixQR().topLeftCorner<2, 2>().triangularView<Eigen::Upper>();
+                            
+                            Eigen::Matrix<double, 3, 2> Y = Q.leftCols<2>();
+                            Eigen::Vector3d Z = Q.col(2);
+                            
+                            // Apply formula: p̂[k] = YR₁^(-T)[0; 1] + ZZ^T n_p(p[k])
+                            Eigen::Vector2d R1_inv_T_b = R1.transpose().triangularView<Eigen::Lower>().solve(b);
+                            pk_hat.col(j) = Y * R1_inv_T_b + Z * (Z.dot(n_p));
+                        }
+                        
+                        // Convert predicted points to image coordinates
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQbarOik_hat(2, rQOik.cols());
+                        for (int j = 0; j < rQOik.cols(); ++j) {
+                            rQbarOik_hat.col(j) = pk_hat.col(j).head<2>() / pk_hat(2, j);
+                        }
+                        Eigen::Matrix<double, 2, Eigen::Dynamic> rQOik_hat = camera.distort(rQbarOik_hat);
+                    
+                    // Draw measured and predicted flow vectors on outputFrame (full resolution)
                     for (int j = 0; j < rQOik.cols(); ++j)
                     {
                         cv::Point2f ptPrev(rQOikm1(0, j), rQOikm1(1, j));
                         cv::Point2f ptCurr(rQOik(0, j), rQOik(1, j));
                         cv::Point2f ptPred(rQOik_hat(0, j), rQOik_hat(1, j));
                         
-                        // Predicted flow (blue) - thickness scaled for full resolution
+                        // Predicted flow (blue)
                         cv::arrowedLine(outputFrame, ptPrev, ptPred, 
                                        cv::Scalar(255, 0, 0), divisor, cv::LINE_AA);
-                
+                        
                         if (measFlow.inlierMask()[j])
                         {
                             // Measured inliers (green)
@@ -407,6 +508,10 @@ void runVisualNavigationFromVideo(
                             cv::arrowedLine(outputFrame, ptPrev, ptCurr, 
                                            cv::Scalar(0, 0, 255), divisor, cv::LINE_AA);
                         }
+                    }
+                    } // end if (canVisualizeFlow)
+                    else {
+                        std::println("Skipping flow visualization (first frame or no features)");
                     }
                     
                     // 3. Process ArUco SLAM measurement if markers detected
@@ -450,7 +555,27 @@ void runVisualNavigationFromVideo(
                     // Export frame if needed
                     if (doExport && !imgout.empty())
                     {
-                        bufferedVideoWriter.write(imgout);
+                        // Lazy video writer initialization
+                        if (!videoWriterOpened)
+                        {
+                            double outputFps = fps/imgModulus;
+                            int codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+                            videoOut.open(outputPath.string(), codec, outputFps, imgout.size());
+                            
+                            if (!videoOut.isOpened()) {
+                                std::cerr << "Failed to open video writer!" << std::endl;
+                                doExport = false;
+                            } else {
+                                bufferedVideoWriter.start(videoOut);
+                                videoWriterOpened = true;
+                                std::println("Video writer opened: [{} x {}] @ {} fps", 
+                                           imgout.size().width, imgout.size().height, outputFps);
+                            }
+                        }
+                        
+                        if (videoWriterOpened) {
+                            bufferedVideoWriter.write(imgout);
+                        }
                     }
                 
                     // Update for next iteration
@@ -467,16 +592,17 @@ void runVisualNavigationFromVideo(
     }
 
     // Cleanup
-    if (doExport)
+    if (doExport && videoWriterOpened)
     {
+        std::println("Finalizing video export...");
         bufferedVideoWriter.stop();
+        videoOut.release();  // Explicitly release the video writer
+        std::println("Video export complete: {}", outputPath.string());
     }
     bufferedVideoReader.stop();
     
     std::println("\nVisual navigation complete. Processed {} keyframes.", k);
 }
-
-// [All the plotting functions remain EXACTLY the same - copy from original]
 
 // Reuse functions from visual odometry code
 Eigen::Vector6d getInitialPose(const DJIVideoCaption & caption0)
@@ -687,63 +813,38 @@ void plotStateInfo(cv::Mat & img, const Eigen::Vector6d & etak,
 
 void plotTransVelocity(cv::Mat & img, const Eigen::VectorXd & x, const Eigen::Vector6d & etak, const Eigen::Vector6d & etakm1, const Camera & camera, const int & divisor)
 {
-    // plot secant approximation of translational velocity (Epipole)
-    Eigen::Vector3d rBNn_k = etak.head<3>();
-    Eigen::Vector3d rBNn_km1 = etakm1.head<3>();
+    // Plot only the translational velocity in ORANGE
     Eigen::Matrix3d Rnb_k = rpy2rot(etak.tail<3>());
-    
-    Eigen::Vector3d translation_ned = rBNn_k - rBNn_km1;
-    
-    if (translation_ned.norm() < 1e-6) return;
-    
     Eigen::Matrix3d Rbc = camera.Tbc.rotationMatrix;
     Eigen::Matrix3d Rnc_k = Rnb_k * Rbc;
     Eigen::Matrix3d Rcn_k = Rnc_k.transpose();
-    
-    Eigen::Vector3d translation_camera = Rcn_k * translation_ned;
-    
-    cv::Vec3d translation_cv(translation_camera(0), translation_camera(1), translation_camera(2));
-    
-    // Check if epipole direction is within FOV
-    if (!camera.isVectorWithinFOV(translation_cv)) return;
-    
-    cv::Vec2d pixel = camera.vectorToPixel(translation_cv);
-    cv::Point2d epipole(pixel[0]/divisor, pixel[1]/divisor);
-    
-    cv::circle(img, epipole, 10, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
-    cv::circle(img, epipole, 3, cv::Scalar(0, 165, 255), -1, cv::LINE_AA);
-    cv::line(img, epipole + cv::Point2d(-15, 0), epipole + cv::Point2d(15, 0),
-            cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
-    cv::line(img, epipole + cv::Point2d(0, -15), epipole + cv::Point2d(0, 15),
-            cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
 
-    // plot translational velocity
     Eigen::Vector3d vBNb = x.segment<3>(0);  // Translational velocity in body frame
-    
+
     // Transform velocity from body frame to NED frame
     Eigen::Vector3d vBNn = Rnb_k * vBNb;
-    
+
     // Transform velocity from NED to camera frame
     Eigen::Vector3d vCNc = Rcn_k * vBNn;
-    
+
     cv::Vec3d velocity_cv(vCNc(0), vCNc(1), vCNc(2));
-    
+
     // Check if velocity direction is within FOV
     if (camera.isVectorWithinFOV(velocity_cv)) {
         cv::Vec2d pixel_vel = camera.vectorToPixel(velocity_cv);
         cv::Point2d velocity_point(pixel_vel[0]/divisor, pixel_vel[1]/divisor);
-        
-        // Draw velocity vector in GREEN
-        cv::circle(img, velocity_point, 10, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
-        cv::circle(img, velocity_point, 3, cv::Scalar(0, 255, 0), -1, cv::LINE_AA);
+
+        // Draw velocity vector in ORANGE (BGR: 0,165,255)
+        cv::circle(img, velocity_point, 10, cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+        cv::circle(img, velocity_point, 3, cv::Scalar(0, 165, 255), -1, cv::LINE_AA);
         cv::line(img, velocity_point + cv::Point2d(-15, 0), velocity_point + cv::Point2d(15, 0),
-                cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+                cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
         cv::line(img, velocity_point + cv::Point2d(0, -15), velocity_point + cv::Point2d(0, 15),
-                cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
-        
-        // Label
+                cv::Scalar(0, 165, 255), 2, cv::LINE_AA);
+
+        // Optional: Label in orange
         cv::putText(img, "Velocity (State)", velocity_point + cv::Point2d(15, 5),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 165, 255), 1, cv::LINE_AA);
     }
 }
 

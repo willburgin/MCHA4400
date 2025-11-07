@@ -24,6 +24,11 @@ void SystemVisualNav::setFlowEvent(bool isEvent)
     isFlowEvent_ = isEvent;
 }
 
+void SystemVisualNav::setScenario(int scenario)
+{
+    scenario_ = scenario;
+}
+
 void SystemVisualNav::predict(double time)
 {
     double dt = time - time_;
@@ -40,11 +45,6 @@ void SystemVisualNav::predict(double time)
 
         J.resize(nx, nx);
         J.setIdentity();
-
-        // IMPORTANT:
-        // Do NOT modify zeta here, even if isFlowEvent == true.
-        // Leave x_kp1.segment<6>(12) as-is.
-        // Leave J rows [12..17] as identity on [12..17].
 
         return x_kp1;
     };
@@ -243,14 +243,34 @@ GaussianInfo<double> SystemVisualNav::processNoiseDensity(double dt) const
 {
     // SQ is an upper triangular matrix such that SQ.'*SQ = Q is the power spectral density of the continuous time process noise
 
-    // // TODO: Assignment(s) Tuning parameters
-    // best
-    const double sigma_vx = 2.2;  // m/s / sqrt(s)
-    const double sigma_vy = 2.0;  // m/s / sqrt(s)
-    const double sigma_vz = 4.0;  // m/s / sqrt(s)
-    const double sigma_p  = 0.2;  // rad/s / sqrt(s)
-    const double sigma_q  = 0.2;  // rad/s / sqrt(s)
-    const double sigma_r  = 1.2;  // rad/s / sqrt(s)
+    // TODO: Assignment(s) Tuning parameters
+    double sigma_vx, sigma_vy, sigma_vz, sigma_p, sigma_q, sigma_r;
+    
+    if (scenario_ == 4) {
+        // Scenario 4: Outdoor with GPS/altimeter
+        sigma_vx = 0.8;  // m/s / sqrt(s)
+        sigma_vy = 0.6;  // m/s / sqrt(s)
+        sigma_vz = 1.0;  // m/s / sqrt(s)
+        sigma_p  = 0.2;  // rad/s / sqrt(s)
+        sigma_q  = 0.2;  // rad/s / sqrt(s)
+        sigma_r  = 0.4;  // rad/s / sqrt(s)
+    } else if (scenario_ == 5) {
+        // Scenario 5: Indoor with ArUco SLAM
+        sigma_vx = 1.8;  // m/s / sqrt(s)
+        sigma_vy = 0.8;  // m/s / sqrt(s)
+        sigma_vz = 0.02; // m/s / sqrt(s)
+        sigma_p  = 0.06; // rad/s / sqrt(s)
+        sigma_q  = 0.06; // rad/s / sqrt(s)
+        sigma_r  = 0.09; // rad/s / sqrt(s)
+    } else {
+        // Default values (scenario 4)
+        sigma_vx = 0.8;  // m/s / sqrt(s)
+        sigma_vy = 0.6;  // m/s / sqrt(s)
+        sigma_vz = 1.0;  // m/s / sqrt(s)
+        sigma_p  = 0.2;  // rad/s / sqrt(s)
+        sigma_q  = 0.2;  // rad/s / sqrt(s)
+        sigma_r  = 0.4;  // rad/s / sqrt(s)
+    }
 
     Eigen::Matrix<double, 6, 6> SQ = Eigen::Matrix<double, 6, 6>::Zero();
     SQ(0,0) = sigma_vx;

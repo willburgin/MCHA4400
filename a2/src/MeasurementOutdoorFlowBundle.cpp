@@ -30,7 +30,7 @@ MeasurementOutdoorFlowBundle::MeasurementOutdoorFlowBundle(double time, const Ca
 {
     // TODO: Assignment(s)
     // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;
-    // updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
+    updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
 
     // TODO: Lab 11
     const int divisor               = 2;                // Image scaling factor

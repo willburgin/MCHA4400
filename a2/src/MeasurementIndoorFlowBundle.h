@@ -9,6 +9,7 @@
 #include "Pose.hpp"
 #include "Camera.h"
 #include "Measurement.h"
+#include <iostream>
 
 class MeasurementIndoorFlowBundle : public Measurement
 {
@@ -55,134 +56,92 @@ protected:
 };
 
 template <typename Scalar>
-Eigen::Matrix<Scalar, 3, Eigen::Dynamic> MeasurementIndoorFlowBundle::predictFlowImpl(const Eigen::VectorX<Scalar> & x, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pkm1, const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pk) const
+Eigen::Matrix<Scalar, 3, Eigen::Dynamic> MeasurementIndoorFlowBundle::predictFlowImpl(
+    const Eigen::VectorX<Scalar> & x, 
+    const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pkm1, 
+    const Eigen::Matrix<Scalar, 3, Eigen::Dynamic> & pk) const
 {
-    assert(x.rows() >= 18);
-    assert(x.cols() == 1);
-    assert(pkm1.cols() == pk.cols());
-    Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pk_hat(3, pkm1.cols());
-    
-    // Extract states
-    Eigen::Vector3<Scalar> rBNn_k = x.template segment<3>(6);
-    Eigen::Vector3<Scalar> thetaNB_k = x.template segment<3>(9);
-    
-    Eigen::Vector3<Scalar> rBNn_km1 = x.template segment<3>(12);
-    Eigen::Vector3<Scalar> thetaNB_km1 = x.template segment<3>(15);
-    
-    // Get rotation matrices (body frame)
-    Eigen::Matrix3<Scalar> Rnb_k = rpy2rot(thetaNB_k);
-    Eigen::Matrix3<Scalar> Rnb_km1 = rpy2rot(thetaNB_km1);
-    
-    // Body-to-camera transformation
-    Eigen::Matrix3d Rbc = camera_.Tbc.rotationMatrix;
-    Eigen::Matrix3<Scalar> Rbc_scalar = Rbc.cast<Scalar>();
-    
-    // Camera orientations in nav frame
-    Eigen::Matrix3<Scalar> Rnc_k = Rnb_k * Rbc_scalar;
-    Eigen::Matrix3<Scalar> Rnc_km1 = Rnb_km1 * Rbc_scalar;
-    
-    // Camera positions in nav frame
-    Eigen::Vector3<Scalar> rCNn_k = rBNn_k;
-    Eigen::Vector3<Scalar> rCNn_km1 = rBNn_km1;
-    
-    // Camera parameters
-    Eigen::Matrix3d K;
-    cv::cv2eigen(camera_.cameraMatrix, K);
-    Eigen::Matrix3<Scalar> K_scalar = K.cast<Scalar>();
-    
-    // Compute K^-1
-    Scalar fx = K_scalar(0, 0);
-    Scalar fy = K_scalar(1, 1);
-    Scalar cx = K_scalar(0, 2);
-    Scalar cy = K_scalar(1, 2);
-    
-    Eigen::Matrix3<Scalar> K_inv;
-    K_inv << Scalar(1)/fx,  Scalar(0),     -cx/fx,
-             Scalar(0),     Scalar(1)/fy,  -cy/fy,
-             Scalar(0),     Scalar(0),      Scalar(1);
-    
-    // Translation vector
-    Eigen::Vector3<Scalar> translation = rCNn_km1 - rCNn_k;
-    
-    // Compute skew-symmetric matrix of translation
-    Eigen::Matrix3<Scalar> S_t;
-    S_t << Scalar(0), -translation(2), translation(1),
-           translation(2), Scalar(0), -translation(0),
-           -translation(1), translation(0), Scalar(0);
-    
-    // Fundamental matrix: F = K^-T * R_k^T * S(t) * R_km1 * K^-1
-    Eigen::Matrix3<Scalar> F = K_inv.transpose() * Rnc_k.transpose() * S_t * Rnc_km1 * K_inv;
-    
-    // For each point, project onto epipolar line using constrained least norm
-    for (int i = 0; i < pkm1.cols(); ++i) {
-        // Compute epipolar line in frame k: l[k] = F * p[k-1]
-        Eigen::Vector3<Scalar> l = F * pkm1.col(i);
-        
-        // Project p[k] onto epipolar line using constrained least norm
-        // We want to minimize ||p_hat - p[k]|| subject to l^T * p_hat = 0 and e3^T * p_hat = 1
-        
-        // Set up constraint matrix A = [l^T; e3^T]
-        Eigen::Matrix<Scalar, 2, 3> A;
-        A.row(0) = l.transpose();
-        A.row(1) = Eigen::Vector3<Scalar>(Scalar(0), Scalar(0), Scalar(1)).transpose();
-        
-        // Constraint vector b = [0; 1]
-        Eigen::Vector2<Scalar> b;
-        b << Scalar(0), Scalar(1);
-        
-        // Normalize p[k] to get x0
-        Eigen::Vector3<Scalar> pk_normalized = pk.col(i);
-        pk_normalized = pk_normalized / pk_normalized(2); // Ensure z = 1
-        
-        // Perform QR decomposition of A^T
-        Eigen::HouseholderQR<Eigen::Matrix<Scalar, 3, 2>> qr(A.transpose());
-        Eigen::Matrix<Scalar, 3, 3> Q = qr.householderQ();
-        Eigen::Matrix<Scalar, 2, 2> R1 = qr.matrixQR().template topLeftCorner<2, 2>().template triangularView<Eigen::Upper>();
-        
-        // Extract Y (first 2 columns) and Z (last column) from Q
-        Eigen::Matrix<Scalar, 3, 2> Y = Q.template leftCols<2>();
-        Eigen::Vector3<Scalar> Z = Q.col(2);
-        
-        // Compute solution: p_hat = Y * R1^-T * b + Z * Z^T * x0
-        Eigen::Vector2<Scalar> R1_inv_T_b = R1.transpose().template triangularView<Eigen::Lower>().solve(b);
-        pk_hat.col(i) = Y * R1_inv_T_b + Z * Z.dot(pk_normalized);
-    }
-    return pk_hat;
+    // this function is useless for indoor flow bundle
+    return Eigen::Matrix<Scalar, 3, Eigen::Dynamic>::Zero(3, pk.cols());
 }
 
 template <typename Scalar>
 Scalar MeasurementIndoorFlowBundle::logLikelihoodImpl(const Eigen::VectorX<Scalar> & x) const
 {
     assert(pkm1_.cols() == pk_.cols());
+    int m = pkm1_.cols();
+
+    // Extract translation for fundamental matrix computation
+    Eigen::Vector3<Scalar> rBNn_k = x.template segment<3>(6);
+    Eigen::Vector3<Scalar> rBNn_km1 = x.template segment<3>(12);
+    Eigen::Vector3<Scalar> translation = rBNn_km1 - rBNn_k;
+    // std::cout << "translation: " << translation.transpose() << std::endl;
     
-    // Cast measured features to Scalar type for autodiff
+    // ===== COMPUTE FUNDAMENTAL MATRIX F =====
+    Eigen::Vector3<Scalar> thetaNB_k = x.template segment<3>(9);
+    Eigen::Vector3<Scalar> thetaNB_km1 = x.template segment<3>(15);
+    
+    Eigen::Matrix3<Scalar> Rnb_k = rpy2rot(thetaNB_k);
+    Eigen::Matrix3<Scalar> Rnb_km1 = rpy2rot(thetaNB_km1);
+    
+    Eigen::Matrix3d Rbc = camera_.Tbc.rotationMatrix;
+    Eigen::Matrix3<Scalar> Rbc_scalar = Rbc.cast<Scalar>();
+    
+    Eigen::Matrix3<Scalar> Rnc_k = Rnb_k * Rbc_scalar;
+    Eigen::Matrix3<Scalar> Rnc_km1 = Rnb_km1 * Rbc_scalar;
+    
+    Eigen::Matrix3d K;
+    cv::cv2eigen(camera_.cameraMatrix, K);
+    Eigen::Matrix3<Scalar> K_scalar = K.cast<Scalar>();
+    
+    Scalar fx = K_scalar(0, 0);
+    Scalar fy = K_scalar(1, 1);
+    Scalar cx = K_scalar(0, 2);
+    Scalar cy = K_scalar(1, 2);
+    
+    Eigen::Matrix3<Scalar> K_inv;
+    K_inv << Scalar(1)/fx, Scalar(0), -cx/fx,
+             Scalar(0), Scalar(1)/fy, -cy/fy,
+             Scalar(0), Scalar(0), Scalar(1);
+    
+    Eigen::Matrix3<Scalar> S_t;
+    S_t << Scalar(0), -translation(2), translation(1),
+           translation(2), Scalar(0), -translation(0),
+           -translation(1), translation(0), Scalar(0);
+    
+    Eigen::Matrix3<Scalar> F = K_inv.transpose() * Rnc_k.transpose() * S_t * Rnc_km1 * K_inv;
+    
+    // Create 1D measurement model: N(0, sigma^2)
+    Eigen::Matrix<Scalar, 1, 1> S;
+    S(0, 0) = Scalar(sigma_);
+    GaussianInfo<Scalar> measurementModel = GaussianInfo<Scalar>::fromSqrtMoment(S);
+    
+    Scalar logLik = Scalar(0);
     Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pkm1_scalar = pkm1_.template cast<Scalar>();
     Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pk_scalar = pk_.template cast<Scalar>();
     
-    // Predict flow in homogeneous coordinates
-    Eigen::Matrix<Scalar, 3, Eigen::Dynamic> pk_hat = predictFlowImpl(x, pkm1_scalar, pk_scalar);
-    
-    // Apply r() to both predicted AND measured features
-    Eigen::Matrix<Scalar, 2, Eigen::Dynamic> rQbarOik_hat = 
-        pk_hat.template topRows<2>().array().rowwise() / pk_hat.row(2).array();
-    
-    Eigen::Matrix<Scalar, 2, Eigen::Dynamic> rQbarOik_measured = 
-        pk_scalar.template topRows<2>().array().rowwise() / pk_scalar.row(2).array();
-    
-    Scalar logLik = Scalar(0);
-    
-    // Measurement covariance - cast sigma_ to Scalar
-    Eigen::Matrix2<Scalar> S = Scalar(sigma_) * Eigen::Matrix2<Scalar>::Identity();
-    GaussianInfo<Scalar> measurementModel = GaussianInfo<Scalar>::fromSqrtMoment(S);
-    
-    int nFeatures = pk_.cols();
-    for (int i = 0; i < nFeatures; ++i) {
-        // Residual: measured - predicted
-        Eigen::Vector2<Scalar> residual = 
-            rQbarOik_measured.col(i) - rQbarOik_hat.col(i);
+    for (int j = 0; j < m; ++j) 
+    {
+        // Compute epipolar line: l[k] = F * p[k-1]
+        Eigen::Vector3<Scalar> l = F * pkm1_scalar.col(j);
         
-        // Evaluate log likelihood
-        logLik += measurementModel.log(residual);
+        // Normalize line: n_l(l) = l / sqrt(a^2 + b^2)
+        Scalar l_norm = sqrt(l(0)*l(0) + l(1)*l(1));
+        
+        Eigen::Vector3<Scalar> n_l = l / l_norm;
+        
+        // Normalize point: n_p(p[k]) = p[k] / p[k](2)
+        Eigen::Vector3<Scalar> n_p = pk_scalar.col(j) / pk_scalar(2, j);
+        
+        // Compute scalar measurement: n_p(p[k])^T * n_l(F * p[k-1])
+        Scalar measurement_scalar = n_p.dot(n_l);
+        
+        // Wrap in 1D vector for GaussianInfo::log()
+        Eigen::Matrix<Scalar, 1, 1> measurement;
+        measurement(0, 0) = measurement_scalar;
+        
+        // Evaluate log N(measurement_scalar; 0, sigma^2)
+        logLik += measurementModel.log(measurement);
     }
     
     return logLik;
