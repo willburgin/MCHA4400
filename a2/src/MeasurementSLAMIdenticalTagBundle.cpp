@@ -2,7 +2,9 @@
 #include <numeric>
 #include <vector>
 #include <stdexcept>
+#include <print>
 #include <Eigen/Core>
+#include <opencv2/core/mat.hpp>
 #include "GaussianInfo.hpp"
 #include "SystemBase.h"
 #include "SystemEstimator.h"
@@ -15,16 +17,43 @@
 #include <autodiff/forward/dual.hpp>
 #include <autodiff/forward/dual/eigen.hpp>
 #include "SystemVisualNavPoseLandmarks.h"
+#include "imagefeatures.h"
 
-MeasurementSLAMIdenticalTagBundle::MeasurementSLAMIdenticalTagBundle(double time, const Eigen::Matrix<double, 8, Eigen::Dynamic> & Y, const Camera & camera)
+MeasurementSLAMIdenticalTagBundle::MeasurementSLAMIdenticalTagBundle(double time, const cv::Mat & image, const Camera & camera, int maxNumMarkers)
     : MeasurementSLAM(time, camera)
-    , Y_(Y)
     , sigma_(6.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
     // updateMethod_ = UpdateMethod::SR1TRUSTEIG;
     // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;
+    
+    // Detect ArUco markers
+    ArucoDetectionResult arucoResult = detectAndDrawArUco(image, maxNumMarkers);
+    visualizationImage_ = arucoResult.image;
+    
+    // Store marker IDs for this frame
+    frameMarkerIDs_ = arucoResult.markerIds;
+    
+    // Format Y matrix (8 × nDetections) - 4 corners × 2 coordinates per marker
+    if (!arucoResult.markerCorners.empty())
+    {
+        Y_.resize(8, arucoResult.markerCorners.size());
+        for (size_t j = 0; j < arucoResult.markerCorners.size(); ++j)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                Y_(2*c, j) = arucoResult.markerCorners[j][c].x;
+                Y_(2*c+1, j) = arucoResult.markerCorners[j][c].y;
+            }
+        }
+        std::println("Detected {} ArUco markers", arucoResult.markerCorners.size());
+    }
+    else
+    {
+        Y_.resize(8, 0);
+        std::println("No ArUco markers detected");
+    }
 }
 
 MeasurementSLAM * MeasurementSLAMIdenticalTagBundle::clone() const

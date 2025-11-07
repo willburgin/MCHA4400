@@ -11,8 +11,15 @@
 class MeasurementSLAMIdenticalTagBundle : public MeasurementSLAM
 {
 public:
-    MeasurementSLAMIdenticalTagBundle(double time, const Eigen::Matrix<double, 8, Eigen::Dynamic> & Y, const Camera & camera);
+    MeasurementSLAMIdenticalTagBundle(double time, const cv::Mat & image, const Camera & camera, int maxNumMarkers = 100);
     MeasurementSLAM * clone() const override;
+    
+    // Get the visualization image with detected markers drawn
+    const cv::Mat& getVisualizationImage() const { return visualizationImage_; }
+    
+    // Get the measurement matrix (for checking if any markers were detected)
+    const Eigen::Matrix<double, 8, Eigen::Dynamic>& getY() const { return Y_; }
+    
     virtual Eigen::VectorXd simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
     virtual double logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
     virtual double logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const override;
@@ -41,6 +48,7 @@ protected:
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
     std::vector<int> frameMarkerIDs_;               // Marker IDs for each frame
     std::vector<size_t> visibleLandmarks_;            // Visibility status for each landmark
+    cv::Mat visualizationImage_;                     // Image with detected markers drawn
 };
 
 // Image feature location for a given landmark (ArUco marker with 4 corners)

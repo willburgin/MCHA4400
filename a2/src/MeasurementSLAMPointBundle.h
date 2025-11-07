@@ -12,8 +12,15 @@
 class MeasurementPointBundle : public MeasurementSLAM
 {
 public:
-    MeasurementPointBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera);
+    MeasurementPointBundle(double time, const cv::Mat & image, const Camera & camera, int maxNumFeatures = 100);
     MeasurementSLAM * clone() const override;
+    
+    // Get the visualization image with detected features drawn
+    const cv::Mat& getVisualizationImage() const { return visualizationImage_; }
+    
+    // Get the measurement matrix (for checking if any features were detected)
+    const Eigen::Matrix<double, 2, Eigen::Dynamic>& getY() const { return Y_; }
+    
     virtual Eigen::VectorXd simulate(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
     virtual double logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system) const override;
     virtual double logLikelihood(const Eigen::VectorXd & x, const SystemEstimator & system, Eigen::VectorXd & g) const override;
@@ -41,6 +48,7 @@ protected:
     double sigma_;                                  // Feature error standard deviation (in pixels)
     std::vector<int> idxFeatures_;                  // Features associated with visible landmarks
     std::vector<std::size_t> visibleLandmarks_;     // Visible landmarks
+    cv::Mat visualizationImage_;                     // Image with detected features drawn
 };
 
 // Image feature location for a given landmark

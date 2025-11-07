@@ -25,6 +25,9 @@ public:
     virtual void predict(double time) override;
     virtual Eigen::VectorXd dynamics(double t, const Eigen::VectorXd & x, const Eigen::VectorXd & u) const override;
     virtual Eigen::VectorXd dynamics(double t, const Eigen::VectorXd & x, const Eigen::VectorXd & u, Eigen::MatrixXd & J) const override;
+    
+    // Static templated version for autodiff
+    template <typename Scalar> static Eigen::VectorX<Scalar> dynamics(const Eigen::VectorX<Scalar> & x);
     virtual Eigen::VectorXd input(double t, const Eigen::VectorXd & x) const override;
     virtual GaussianInfo<double> processNoiseDensity(double dt) const override;
     virtual std::vector<Eigen::Index> processNoiseIndex() const override;
@@ -86,6 +89,34 @@ template <typename Scalar>
 Eigen::Vector3<Scalar> SystemVisualNav::cameraOrientationEuler(const Camera & camera, const Eigen::VectorX<Scalar> & x)
 {
     return rot2rpy(cameraOrientation(camera, x));
+}
+
+// Static templated dynamics for autodiff
+template <typename Scalar>
+Eigen::VectorX<Scalar> SystemVisualNav::dynamics(const Eigen::VectorX<Scalar> & x)
+{
+    //  dnu/dt =          0 + dwnu/dt
+    // deta/dt = JK(eta)*nu +       0
+    //   dm/dt =          0 +       0
+    //
+    // f(x) = [     0      ]
+    //        [ JK(eta)*nu ]
+    //        [     0      ] for all map states
+    
+    Eigen::VectorX<Scalar> f(x.size());
+    f.setZero();
+    
+    // Extract velocity and pose
+    Eigen::Matrix<Scalar, 6, 1> nu = x.template segment<6>(0);      // [vBNb, omegaBNb]
+    Eigen::Matrix<Scalar, 6, 1> eta = x.template segment<6>(6);     // [rBNn, Thetanb]
+    
+    // Compute kinematic transformation
+    Eigen::Matrix<Scalar, 6, 6> J_eta = eulerKinematicTransformation(eta);
+    
+    // Set pose derivative
+    f.template segment<6>(6) = J_eta * nu;
+    
+    return f;
 }
 
 #endif

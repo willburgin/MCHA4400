@@ -401,11 +401,7 @@ void runVisualNavigationFromVideo(
                     // Mark frame as a flow frame (needed for proper zeta cloning)
                     system.setFlowEvent(true);
                     
-                    // 1. Detect ArUco markers first
-                    ArucoDetectionResult arucoResult = detectAndDrawArUco(imgk_raw, 100);
-                    cv::Mat outputFrame = arucoResult.image.clone();  // Already has ArUco drawn on it
-                    
-                    // 2. Indoor Flow measurement
+                    // 1. Indoor Flow measurement
                     MeasurementIndoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
                     measFlow.process(system);
                     std::println("Flow update complete");
@@ -418,25 +414,16 @@ void runVisualNavigationFromVideo(
                     Eigen::VectorXd x = system.density.mean();
                     Eigen::Vector6d etak = x.segment<6>(6);
                     
-                    // Visualize flow vectors
+                    // 2. Create ArUco SLAM measurement (detection happens in constructor)
+                    measTags = std::make_unique<MeasurementSLAMIdenticalTagBundle>(time, imgk_raw, camera, 100);
+                    
+                    // Get visualization image and draw flow vectors on it
+                    cv::Mat outputFrame = measTags->getVisualizationImage().clone();
                     plotFlowVectors(outputFrame, x, rQOikm1, rQOik, measFlow.inlierMask(), camera, divisor);
                     
-                    // 3. Process ArUco SLAM measurement if markers detected
-                    if (!arucoResult.markerCorners.empty())
+                    // 3. Process ArUco SLAM measurement if markers were detected
+                    if (measTags->getY().cols() > 0)
                     {
-                        // Format Y matrix (8 × nDetections)
-                        Eigen::Matrix<double, 8, Eigen::Dynamic> Y(8, arucoResult.markerCorners.size());
-                        for (size_t j = 0; j < arucoResult.markerCorners.size(); ++j)
-                        {
-                            for (int c = 0; c < 4; ++c)
-                            {
-                                Y(2*c, j) = arucoResult.markerCorners[j][c].x;
-                                Y(2*c+1, j) = arucoResult.markerCorners[j][c].y;
-                            }
-                        }
-                
-                        // Create and process identical tag measurement
-                        measTags = std::make_unique<MeasurementSLAMIdenticalTagBundle>(time, Y, camera);
                         measTags->process(system);
                         
                         std::println("ArUco SLAM update complete");
@@ -446,6 +433,11 @@ void runVisualNavigationFromVideo(
                         system.view() = outputFrame.clone();
                         plot->setData(system, *measTags);
                         plot->render();
+                    }
+                    else
+                    {
+                        // No markers detected, just update the view
+                        system.view() = outputFrame.clone();
                     }
                     
                     // Handle interactive mode
@@ -496,12 +488,7 @@ void runVisualNavigationFromVideo(
                     // Mark frame as a flow frame (needed for proper zeta cloning)
                     system.setFlowEvent(true);
                     
-                    // 1. Detect feature points (Shi-Tomasi)
-                    int maxNumFeatures = 100;
-                    ShiTomasiDetectionResult featureResult = detectAndDrawShiAndTomasi(imgk_raw, maxNumFeatures);
-                    cv::Mat outputFrame = featureResult.image.clone();  // Already has features drawn on it
-                    
-                    // 2. Indoor Flow measurement
+                    // 1. Indoor Flow measurement
                     MeasurementIndoorFlowBundle measFlow(time, camera, imgk_raw, imgkm1_raw, rQOikm1);
                     measFlow.process(system);
                     std::println("Flow update complete");
@@ -514,22 +501,16 @@ void runVisualNavigationFromVideo(
                     Eigen::VectorXd x = system.density.mean();
                     Eigen::Vector6d etak = x.segment<6>(6);
                     
-                    // Visualize flow vectors
+                    // 2. Create Point SLAM measurement (detection happens in constructor)
+                    MeasurementPointBundle measPoints(time, imgk_raw, camera, 100);
+                    
+                    // Get visualization image and draw flow vectors on it
+                    cv::Mat outputFrame = measPoints.getVisualizationImage().clone();
                     plotFlowVectors(outputFrame, x, rQOikm1, rQOik, measFlow.inlierMask(), camera, divisor);
                     
-                    // 3. Process Point SLAM measurement if features detected
-                    if (!featureResult.points.empty())
+                    // 3. Process Point SLAM measurement if features were detected
+                    if (measPoints.getY().cols() > 0)
                     {
-                        // Format Y matrix (2 × nDetections)
-                        Eigen::Matrix<double, 2, Eigen::Dynamic> Y(2, featureResult.points.size());
-                        for (size_t j = 0; j < featureResult.points.size(); ++j)
-                        {
-                            Y(0, j) = featureResult.points[j].x;
-                            Y(1, j) = featureResult.points[j].y;
-                        }
-                
-                        // Create and process point bundle measurement
-                        MeasurementPointBundle measPoints(time, Y, camera);
                         measPoints.process(system);
                         
                         std::println("Point SLAM update complete");
@@ -539,6 +520,11 @@ void runVisualNavigationFromVideo(
                         system.view() = outputFrame.clone();
                         plot->setData(system, measPoints);
                         plot->render();
+                    }
+                    else
+                    {
+                        // No features detected, just update the view
+                        system.view() = outputFrame.clone();
                     }
                     
                     // Handle interactive mode

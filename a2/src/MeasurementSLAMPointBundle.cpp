@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <iostream>
 #include <tuple>
+#include <print>
 #include <Eigen/Core>
+#include <opencv2/core/mat.hpp>
 #include "GaussianInfo.hpp"
 #include "SystemBase.h"
 #include "SystemEstimator.h"
@@ -17,16 +19,37 @@
 #include "MeasurementSLAMPointBundle.h"
 #include "SystemVisualNavPointLandmarks.h"
 #include "rotation.hpp"
+#include "imagefeatures.h"
 
-MeasurementPointBundle::MeasurementPointBundle(double time, const Eigen::Matrix<double, 2, Eigen::Dynamic> & Y, const Camera & camera)
+MeasurementPointBundle::MeasurementPointBundle(double time, const cv::Mat & image, const Camera & camera, int maxNumFeatures)
     : MeasurementSLAM(time, camera)
-    , Y_(Y)
     , sigma_(7.0) // TODO: Assignment(s)
 {
     // updateMethod_ = UpdateMethod::BFGSLMSQRT;
     updateMethod_ = UpdateMethod::BFGSTRUSTSQRT;
     // updateMethod_ = UpdateMethod::SR1TRUSTEIG;
     // updateMethod_ = UpdateMethod::NEWTONTRUSTEIG;
+    
+    // Detect Shi-Tomasi corner features
+    ShiTomasiDetectionResult featureResult = detectAndDrawShiAndTomasi(image, maxNumFeatures);
+    visualizationImage_ = featureResult.image;
+    
+    // Format Y matrix (2 × nDetections) - x,y coordinates per feature
+    if (!featureResult.points.empty())
+    {
+        Y_.resize(2, featureResult.points.size());
+        for (size_t j = 0; j < featureResult.points.size(); ++j)
+        {
+            Y_(0, j) = featureResult.points[j].x;
+            Y_(1, j) = featureResult.points[j].y;
+        }
+        std::println("Detected {} corner features", featureResult.points.size());
+    }
+    else
+    {
+        Y_.resize(2, 0);
+        std::println("No corner features detected");
+    }
 }
 
 MeasurementSLAM * MeasurementPointBundle::clone() const
